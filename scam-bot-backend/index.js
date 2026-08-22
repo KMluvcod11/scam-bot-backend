@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const line = require('@line/bot-sdk');
+const axios = require('axios');
 
 const app = express();
 
@@ -34,24 +35,35 @@ async function handleEvent(event) {
   const userMessage = event.message.text;
   console.log(`[LOG] ข้อความเข้า: ${userMessage}`);
 
-  // TODO: จุดนี้คือที่ที่เราจะเอาข้อความไปเช็คกับ Dataset หรือส่งให้ LLM วิเคราะห์
-  // สมมติว่าเจอคำว่า "คลิกเลย" ให้ลองแจ้งเตือนดูก่อน
-  if (userMessage.includes('คลิกเลย')) {
-    return client.replyMessage({
-      replyToken: event.replyToken,
-      messages: [
-        {
-          type: 'text',
-          text: '⚠️ [ระบบเตือนภัย] ระวัง! ข้อความนี้อาจเป็นลิงก์อันตราย'
-        }
-      ]
+try {
+    // ยิง API ไปหา Python AI Engine
+    const response = await axios.post('http://127.0.0.1:8000/api/analyze', {
+      message: userMessage
     });
+    
+    const analysisResult = response.data;
+    console.log(`[AI Result]`, analysisResult);
+
+    // เช็คผลลัพธ์จาก Python ว่าเป็นสแกมหรือไม่
+    if (analysisResult.is_scam) {
+      return client.replyMessage({
+        replyToken: event.replyToken,
+        messages: [
+          {
+            type: 'text',
+            text: `⚠️ [ระบบเตือนภัย]\nระดับความเสี่ยง: ${analysisResult.risk_level}\nเหตุผล: ${analysisResult.reason}`
+          }
+        ]
+      });
+    }
+    
+    return Promise.resolve(null);
+
+  } catch (error) {
+    console.error('Error connecting to Python AI:', error.message);
+    return Promise.resolve(null);
   }
-
-  return Promise.resolve(null); // ถ้าเป็นข้อความปกติ ให้บอทเงียบไว้
 }
-
-// TODO: อนาคตสามารถเพิ่ม API เส้นอื่นๆ ให้นนท์และหยกเรียกใช้ที่นี่ได้ เช่น app.get('/api/stats', ...)
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
