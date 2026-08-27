@@ -28,7 +28,7 @@ def health_check():
 @app.post("/api/analyze")
 def analyze_message(req: MessageRequest):
     text = req.message
-    print(f"📥 ได้รับข้อความจาก Node.js: {text}")
+    print(f" ได้รับข้อความจาก Node.js: {text}")
     
     # ย้ายคำสั่งวิเคราะห์มารวมใน Prompt
     prompt = f"""
@@ -53,11 +53,11 @@ def analyze_message(req: MessageRequest):
         result_data = json.loads(clean_text)
         
         result_data["original_message"] = text
-        print(f"🧠 ผลการวิเคราะห์จาก Gemini: {result_data}")
+        print(f" ผลการวิเคราะห์จาก Gemini: {result_data}")
         return result_data
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f" Error: {e}")
         return {
             "is_scam": False,
             "risk_level": "Unknown",
