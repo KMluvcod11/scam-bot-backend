@@ -4,3 +4,5 @@ pydantic
 google-genai
 supabase
 python-dotenv
+requests
+line-bot-sdk
