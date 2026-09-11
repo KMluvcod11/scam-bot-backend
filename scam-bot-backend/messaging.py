@@ -1,10 +1,13 @@
 """ส่งคำเตือนกลับ LINE และรายงานว่าส่งสำเร็จหรือไม่."""
+# 1. นำเข้า HTTP client และ token จาก config
 import requests
 from config import LINE_CHANNEL_ACCESS_TOKEN
 
 
-# 2. ฟังก์ชันตอบกลับ LINE
+# 2. รับค่า: reply_token ของ event และ message_text ที่ต้องการตอบ
+# คืนค่า bool: True = LINE API ยอมรับ; False = HTTP/เครือข่ายผิดพลาด
 def reply_to_line(reply_token: str, message_text: str) -> bool:
+    # 2.1 ประกาศปลายทาง header ยืนยันตัวตน และ JSON payload
     url = "https://api.line.me/v2/bot/message/reply"
     headers = {
         "Content-Type": "application/json",
@@ -14,6 +17,7 @@ def reply_to_line(reply_token: str, message_text: str) -> bool:
         "replyToken": reply_token,
         "messages": [{"type": "text", "text": message_text}]
     }
+    # 2.2 ส่งคำตอบโดยมี timeout; ไม่มีการ retry อัตโนมัติในฟังก์ชันนี้
     try:
         res = requests.post(url, headers=headers, json=payload, timeout=10)
         res.raise_for_status()

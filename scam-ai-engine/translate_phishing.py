@@ -1,14 +1,21 @@
+# หน้าที่: เตรียม dataset ภาษาไทยจากอีเมลภาษาอังกฤษ ไม่ใช่ส่วนตอบ LINE
+# ใช้ SDK google.generativeai คนละชุดกับ backend; ต้องมี CSV ต้นทางก่อนรัน
+# การรันหรือ import เรียก API จริงและเขียน CSV ผลลัพธ์
+
+# 1. นำเข้าเครื่องมือ
 import pandas as pd
 import google.generativeai as genai
 import time
 import os
 from dotenv import load_dotenv
 
+# 2. โหลด API key และประกาศโมเดล
 load_dotenv()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 model = genai.GenerativeModel('gemini-flash-lite-latest')
 
+# 3. รับค่า: ชื่อ CSV ต้นทาง/ปลายทาง อ้างอิงจาก working directory
 input_file = 'phishing_sampled_1500.csv'
 output_file = 'translated_phishing_line_1500.csv'
 
@@ -22,12 +29,13 @@ except Exception as e:
     print(f"อ่านไฟล์ไม่สำเร็จ: {e}")
     exit()
 
+# 4. รับ row (label, text) และ index → คืนข้อความไทยหรือข้อความแจ้งแปลไม่สำเร็จ
 def translate_to_line(row, index):
-    label = str(row['label']) 
+    label = str(row['label'])
     text = str(row['text'])
-    
+
     # Prompt: แปลง Email ให้เป็นแชท LINE
-    if label == 'Phishing Email': 
+    if label == 'Phishing Email':
         prompt = f"""
         จงแปลและดัดแปลงเนื้อหาจากอีเมล Phishing ภาษาอังกฤษนี้ ให้กลายเป็น 'ข้อความหลอกลวงภาษาไทยที่มิจฉาชีพส่งทาง LINE'
         (ปรับภาษาจากการส่งอีเมล ให้กลายเป็นการส่งแชท LINE หรือประกาศในกลุ่ม LINE)
@@ -42,7 +50,7 @@ def translate_to_line(row, index):
         ข้อความต้นฉบับ: "{text}"
         ตอบกลับมาเฉพาะข้อความแชทภาษาไทยเท่านั้น:
         """
-        
+
     safety_settings = [
         {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
         {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
@@ -50,11 +58,12 @@ def translate_to_line(row, index):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
     ]
 
+    # 4.1 จำกัดการลอง API สูงสุด 3 ครั้งต่อข้อความ
     max_retries = 3
     for attempt in range(max_retries):
         try:
             response = model.generate_content(prompt, safety_settings=safety_settings)
-            time.sleep(5) 
+            time.sleep(5)
             print(f"[{index+1}/{total_rows}] {label.upper()} -> LINE -  สำเร็จ")
             return response.text.strip()
         except Exception as e:
@@ -69,12 +78,13 @@ def translate_to_line(row, index):
 
 print(f"\n2. เริ่มกระบวนการแปลงร่างข้อมูลเป็นแชท LINE ทั้งหมด {total_rows} ข้อความ...")
 
+# 5. วนแปลและพักผลลัพธ์; สำรองไฟล์ทุก 50 แถว
 translated_texts = []
 try:
     for index, row in df.iterrows():
         result = translate_to_line(row, index)
         translated_texts.append(result)
-        
+
         # เซฟไฟล์สำรองทุก 50 แถว
         if (index + 1) % 50 == 0:
             temp_df = df.iloc[:index+1].copy()
@@ -84,7 +94,7 @@ try:
 except KeyboardInterrupt:
     print("\n หยุดการทำงานชั่วคราว! กำลังบันทึกข้อมูลที่ทำเสร็จแล้ว...")
 
-# บันทึกไฟล์ขั้นตอนสุดท้าย (เซฟเฉพาะ label กับ thai_text)
+# 6. บันทึกผลเท่าที่ประมวลผลแล้วเป็น CSV (label, thai_text)
 df_final = df.iloc[:len(translated_texts)].copy()
 df_final['thai_text'] = translated_texts
 df_final[['label', 'thai_text']].to_csv(output_file, index=False, encoding='utf-8-sig')
