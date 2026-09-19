@@ -43,7 +43,8 @@ def text_event(text="ข้อความทดสอบ", number=1):
         "type": "message", "timestamp": 0, "mode": "active",
         "webhookEventId": f"event-{number}",
         "deliveryContext": {"isRedelivery": False},
-        "source": {"type": "user", "userId": "offline-user"},
+        # ชุด regression นี้ยืนยันพฤติกรรมเงียบ/เตือนของกลุ่มเดิม
+        "source": {"type": "group", "groupId": "offline-group", "userId": "offline-user"},
         "replyToken": f"reply-{number}",
         "message": {"type": "text", "id": str(number), "text": text,
                     "quoteToken": "offline-quote"},

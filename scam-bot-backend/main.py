@@ -42,9 +42,13 @@ def parse_webhook(body: bytes, signature: str | None):
                 message = raw.get("message")
                 if not isinstance(message, dict) or not isinstance(message.get("type"), str):
                     raise ValueError("Invalid message")
+                source = raw.get("source")
+                if not isinstance(source, dict) or source.get("type") not in {"user", "group", "room"}:
+                    raise ValueError("Invalid message source")
                 if message["type"] == "text":
                     if not isinstance(message.get("text"), str):
                         raise ValueError("Invalid text")
+                if message["type"] == "text" or source["type"] == "user":
                     for field in ("webhookEventId", "replyToken"):
                         if not isinstance(raw.get(field), str) or not raw[field].strip():
                             raise ValueError("Missing event identity or reply token")
@@ -52,6 +56,8 @@ def parse_webhook(body: bytes, signature: str | None):
         events = parser.parse(body_text, signature)
         # SDK อาจแปลงข้อความที่ข้อมูลไม่ครบเป็น UnknownEvent จึงตรวจ text ซ้ำก่อนใช้งาน
         for raw, event in zip(payload["events"], events):
+            if raw["type"] == "message" and raw["source"]["type"] == "user" and not isinstance(event, MessageEvent):
+                raise ValueError("Invalid private message event")
             if raw["type"] == "message" and raw["message"]["type"] == "text":
                 if not isinstance(event, MessageEvent) or not isinstance(event.message, TextMessageContent):
                     raise ValueError("Invalid text event")
@@ -75,9 +81,11 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
     body = await request.body()
     events = parse_webhook(body, x_line_signature)
 
-    # 5. ประมวลผลแต่ละ event; ข้ามภาพ สติกเกอร์ และ event ที่ไม่ใช่ข้อความ
+    # 5. กลุ่มตรวจเฉพาะ Text; ส่วนตัวตอบด้วยเมื่อสื่อที่ส่งมายังไม่รองรับ
     for event in events:
-        if isinstance(event, MessageEvent) and isinstance(event.message, TextMessageContent):
+        if isinstance(event, MessageEvent) and (
+            isinstance(event.message, TextMessageContent) or event.source.type == "user"
+        ):
             claim = event_guard.claim(event.webhook_event_id)
             if claim == "duplicate":
                 print("[DUPLICATE] ข้าม event เดิมที่กำลังทำหรือเคยทำแล้ว")
@@ -107,6 +115,10 @@ async def process_text_event(event: MessageEvent):
 
 async def _process_text_event(event: MessageEvent):
     """วิเคราะห์และตอบหนึ่ง event; แยกไว้เพื่อให้ Webhook จัดการการกันซ้ำได้ชัดเจน."""
+    # ไม่ส่งคำอธิบายส่วนตัวเข้า group/room; กลุ่มยังใช้ทางเดิมด้านล่าง
+    if getattr(getattr(event, "source", None), "type", None) == "user":
+        await process_private_event(event)
+        return
     user_text = event.message.text
     reply_token = event.reply_token
 
@@ -152,3 +164,62 @@ async def _process_text_event(event: MessageEvent):
         print("[ACTION] กฎสำรองไม่เข้าเกณฑ์เตือน แต่ LLM ตรวจไม่สำเร็จ")
     else:
         print("[ACTION] ไม่เข้าเกณฑ์แจ้งเตือน ดูขั้นตอนการตรวจจาก log ด้านบน")
+
+
+PRIVATE_HELP = (
+    "สวัสดีครับ 👋 ผมช่วยประเมินข้อความที่อาจเสี่ยงต่อการหลอกลวง\n"
+    "ส่งข้อความที่สงสัยมาได้เลยครับ หากส่งลิงก์ ผมยังไม่ได้เปิดตรวจเว็บไซต์ปลายทาง\n"
+    "กรุณาปิดบังข้อมูลส่วนตัว และอย่าส่ง OTP หรือรหัสผ่าน"
+)
+PRIVATE_ERROR = (
+    "⚠️ ขณะนี้ระบบตรวจข้อความนี้ไม่สำเร็จ จึงยังให้ผลประเมินไม่ได้\n"
+    "ผลนี้ไม่ได้หมายความว่าข้อความปลอดภัย กรุณาส่งข้อความมาตรวจใหม่ภายหลัง"
+)
+
+
+def private_reply(result: dict, text: str) -> str:
+    """สร้างคำตอบจากสถานะชัดเจน ไม่แปลง False หรือ fallback เป็นคำรับรอง."""
+    status = result.get("status")
+    reason = result.get("reason", "")
+    if status == "conversation":
+        if text.strip().lower() in {"ขอบคุณ", "ขอบคุณครับ", "ขอบคุณค่ะ", "โอเค", "ok"}:
+            return "ยินดีครับ 😊 หากมีข้อความที่สงสัย ส่งมาให้ช่วยประเมินได้เลย"
+        return PRIVATE_HELP
+    if status == "risk_found" and result.get("is_scam") is True:
+        return (
+            f"⚠️ พบสัญญาณเสี่ยงต่อการหลอกลวง\n• เหตุผล: {reason}\n\n"
+            "อย่าเพิ่งกดลิงก์ โอนเงิน หรือเปิดเผย OTP ควรตรวจสอบผ่านช่องทางที่เชื่อถือได้ก่อน\n"
+            "นี่เป็นผลประเมินจากข้อความ ไม่ใช่การยืนยันตัวตนหรือข้อเท็จจริงของผู้ส่ง"
+        )
+    if status == "no_risk_found" and result.get("is_scam") is False:
+        return (
+            f"✅ ยังไม่พบสัญญาณหลอกลวงชัดเจนจากข้อความที่ส่งมา\n• เหตุผล: {reason}\n\n"
+            "ผลนี้ไม่รับรองว่าปลอดภัย และไม่ได้ยืนยันตัวตนผู้ส่งหรือความปลอดภัยของเว็บปลายทาง"
+        )
+    if status == "uncertain" and result.get("is_scam") is False:
+        return (
+            f"🟡 ข้อมูลยังไม่พอที่จะสรุป\n{reason}\n\n"
+            "ส่งข้อความเดิมพร้อมบริบทที่เกี่ยวข้องรวมในข้อความเดียวเพื่อตรวจใหม่ได้ครับ "
+            "โดยปิดบังข้อมูลส่วนตัว ไม่ส่ง OTP หรือรหัสผ่าน"
+        )
+    return PRIVATE_ERROR
+
+
+async def process_private_event(event: MessageEvent):
+    """ตอบส่วนตัวทุกข้อความที่รองรับ ไม่เก็บประวัติหรือผูกฐานข้อมูลเพิ่มในขั้นนี้."""
+    print("==================== [NEW MESSAGE: PRIVATE] ====================")
+    if not isinstance(event.message, TextMessageContent):
+        reply_msg = "ตอนนี้ยังตรวจรูปภาพ สติกเกอร์ เสียง วิดีโอ หรือไฟล์ไม่ได้ครับ กรุณาคัดลอกข้อความมาส่งแทน"
+    else:
+        try:
+            result = await run_in_threadpool(analyze_message, event.message.text, private=True)
+            reply_msg = private_reply(result, event.message.text)
+            print(f"[PRIVATE RESULT] status={result.get('status', 'error')}")
+        except Exception as error:
+            print(f"[CHECK ERROR] stage=analysis type={type(error).__name__}")
+            reply_msg = PRIVATE_ERROR
+    try:
+        sent = await run_in_threadpool(reply_to_line, event.reply_token, reply_msg)
+        print("[ACTION] LINE API ยอมรับคำตอบส่วนตัวแล้ว" if sent else "[ACTION] ส่งคำตอบส่วนตัวไม่สำเร็จ")
+    except Exception as error:
+        print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
