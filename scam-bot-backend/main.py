@@ -1,6 +1,7 @@
 """จุดเริ่มต้น FastAPI: ตรวจลายเซ็น รับข้อความ วิเคราะห์ และตอบ LINE."""
 # 1. นำเข้าเครื่องมือ: FastAPI รับ HTTP; โมดูลของเราใช้วิเคราะห์และตอบ LINE
 import json
+import re
 from uuid import uuid4
 from bot_observability import log as print, trace_id
 from fastapi import FastAPI, Header, HTTPException, Request
@@ -8,16 +9,18 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from linebot.v3.webhooks import MessageEvent, PostbackEvent, TextMessageContent
 from config import LINE_CHANNEL_SECRET
 from detector import analyze_message
 from messaging import reply_to_line
 from event_guard import EventGuard
+from learning import LessonStore, build_lesson
 
 # 2. ประกาศแอปและตัวตรวจลายเซ็นจาก Channel Secret
 app = FastAPI(title="Scam Detection AI Bot")
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 event_guard = EventGuard()
+lesson_store = LessonStore()
 
 
 def parse_webhook(body: bytes, signature: str | None):
@@ -38,6 +41,19 @@ def parse_webhook(body: bytes, signature: str | None):
         for raw in payload["events"]:
             if not isinstance(raw, dict) or not isinstance(raw.get("type"), str):
                 raise ValueError("Invalid event")
+            if raw["type"] == "postback":
+                source, postback = raw.get("source"), raw.get("postback")
+                if not isinstance(source, dict) or source.get("type") not in {"user", "group", "room"}:
+                    raise ValueError("Invalid postback source")
+                if (not isinstance(postback, dict) or not isinstance(postback.get("data"), str)
+                        or not 1 <= len(postback["data"]) <= 300):
+                    raise ValueError("Invalid postback data")
+                if source["type"] == "user":
+                    if not isinstance(source.get("userId"), str) or not source["userId"].strip():
+                        raise ValueError("Missing postback owner")
+                    for field in ("webhookEventId", "replyToken"):
+                        if not isinstance(raw.get(field), str) or not raw[field].strip():
+                            raise ValueError("Missing postback identity")
             if raw["type"] == "message":
                 message = raw.get("message")
                 if not isinstance(message, dict) or not isinstance(message.get("type"), str):
@@ -56,6 +72,8 @@ def parse_webhook(body: bytes, signature: str | None):
         events = parser.parse(body_text, signature)
         # SDK อาจแปลงข้อความที่ข้อมูลไม่ครบเป็น UnknownEvent จึงตรวจ text ซ้ำก่อนใช้งาน
         for raw, event in zip(payload["events"], events):
+            if raw["type"] == "postback" and not isinstance(event, PostbackEvent):
+                raise ValueError("Invalid postback event")
             if raw["type"] == "message" and raw["source"]["type"] == "user" and not isinstance(event, MessageEvent):
                 raise ValueError("Invalid private message event")
             if raw["type"] == "message" and raw["message"]["type"] == "text":
@@ -83,9 +101,9 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
 
     # 5. กลุ่มตรวจเฉพาะ Text; ส่วนตัวตอบด้วยเมื่อสื่อที่ส่งมายังไม่รองรับ
     for event in events:
-        if isinstance(event, MessageEvent) and (
+        if (isinstance(event, PostbackEvent) and event.source.type == "user") or (isinstance(event, MessageEvent) and (
             isinstance(event.message, TextMessageContent) or event.source.type == "user"
-        ):
+        )):
             claim = event_guard.claim(event.webhook_event_id)
             if claim == "duplicate":
                 print("[DUPLICATE] ข้าม event เดิมที่กำลังทำหรือเคยทำแล้ว")
@@ -104,7 +122,7 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
     return JSONResponse(content="OK", status_code=200)
 
 
-async def process_text_event(event: MessageEvent):
+async def process_text_event(event: MessageEvent | PostbackEvent):
     """สร้างรหัสสุ่มเฉพาะงาน ไม่ใช้ LINE user ID หรือ token เป็นรหัส log."""
     token = trace_id.set(uuid4().hex[:8])
     try:
@@ -113,8 +131,12 @@ async def process_text_event(event: MessageEvent):
         trace_id.reset(token)
 
 
-async def _process_text_event(event: MessageEvent):
+async def _process_text_event(event: MessageEvent | PostbackEvent):
     """วิเคราะห์และตอบหนึ่ง event; แยกไว้เพื่อให้ Webhook จัดการการกันซ้ำได้ชัดเจน."""
+    if isinstance(event, PostbackEvent):
+        if event.source.type == "user":
+            await process_learning_event(event)
+        return
     # ไม่ส่งคำอธิบายส่วนตัวเข้า group/room; กลุ่มยังใช้ทางเดิมด้านล่าง
     if getattr(getattr(event, "source", None), "type", None) == "user":
         await process_private_event(event)
@@ -122,7 +144,7 @@ async def _process_text_event(event: MessageEvent):
     user_text = event.message.text
     reply_token = event.reply_token
 
-    print("==================== [NEW MESSAGE] ====================")
+    print("==================== [NEW GROUP Message] ====================")
     print(f"📩 ข้อความเข้า: \"{user_text}\"")
 
     # ให้ thread pool รอ AI/ฐานข้อมูล เพื่อไม่บล็อกการรับคำขออื่น
@@ -206,11 +228,13 @@ def private_reply(result: dict, text: str) -> str:
 
 
 async def process_private_event(event: MessageEvent):
-    """ตอบส่วนตัวทุกข้อความที่รองรับ ไม่เก็บประวัติหรือผูกฐานข้อมูลเพิ่มในขั้นนี้."""
+    """ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม."""
     print("==================== [NEW MESSAGE: PRIVATE] ====================")
+    case_id = None
     if not isinstance(event.message, TextMessageContent):
         reply_msg = "ตอนนี้ยังตรวจรูปภาพ สติกเกอร์ เสียง วิดีโอ หรือไฟล์ไม่ได้ครับ กรุณาคัดลอกข้อความมาส่งแทน"
     else:
+        print(f"📩 ข้อความเข้า: {json.dumps(event.message.text, ensure_ascii=False)}")
         try:
             result = await run_in_threadpool(analyze_message, event.message.text, private=True)
             reply_msg = private_reply(result, event.message.text)
@@ -218,8 +242,39 @@ async def process_private_event(event: MessageEvent):
         except Exception as error:
             print(f"[CHECK ERROR] stage=analysis type={type(error).__name__}")
             reply_msg = PRIVATE_ERROR
+        else:
+            # บทเรียนเสียต้องไม่ทำให้ผลตรวจที่สำเร็จกลายเป็น error
+            try:
+                lesson = build_lesson(event.message.text, result)
+                if lesson:
+                    case_id = lesson_store.add(getattr(event.source, "user_id", None), lesson)
+                    if not case_id:
+                        print("[LEARNING] ไม่เพิ่มปุ่ม: ไม่มีเจ้าของหรือที่เก็บเต็ม")
+            except Exception as error:
+                print(f"[LEARNING ERROR] type={type(error).__name__}")
     try:
-        sent = await run_in_threadpool(reply_to_line, event.reply_token, reply_msg)
+        options = {"learn_case_id": case_id} if case_id else {}
+        sent = await run_in_threadpool(reply_to_line, event.reply_token, reply_msg, **options)
         print("[ACTION] LINE API ยอมรับคำตอบส่วนตัวแล้ว" if sent else "[ACTION] ส่งคำตอบส่วนตัวไม่สำเร็จ")
+    except Exception as error:
+        print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
+
+
+async def process_learning_event(event: PostbackEvent):
+    """รหัสเคสไม่ใช่สิทธิ์: ต้องตรวจ LINE user ID จาก webhook ที่ผ่านลายเซ็นด้วย."""
+    match = re.fullmatch(r"learn:([0-9a-f]{32})", event.postback.data)
+    if not match:
+        print("[SKIP] ไม่ใช่ปุ่มเรียนรู้ที่รองรับ")
+        return
+    lesson = lesson_store.get(match[1], event.source.user_id)
+    reply_msg = lesson or (
+        "ไม่สามารถเปิดบทเรียนนี้ได้ครับ เคสอาจหมดอายุ บอตรีสตาร์ต หรือไม่ใช่เคสของคุณ\n"
+        "กรุณาส่งข้อความที่ต้องการตรวจใหม่ในแชตส่วนตัว"
+    )
+    print("[LEARNING] พบเคสของผู้ใช้" if lesson else "[LEARNING] เปิดเคสไม่ได้")
+    try:
+        # ไม่วิเคราะห์ซ้ำ ไม่เรียก Gemini/Vector และไม่ส่งข้อความเข้า log
+        sent = await run_in_threadpool(reply_to_line, event.reply_token, reply_msg)
+        print("[ACTION] LINE API ยอมรับคำตอบเรียนรู้แล้ว" if sent else "[ACTION] ส่งคำตอบเรียนรู้ไม่สำเร็จ")
     except Exception as error:
         print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")

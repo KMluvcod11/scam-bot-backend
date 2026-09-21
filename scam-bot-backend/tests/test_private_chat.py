@@ -79,6 +79,18 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    async def test_private_incoming_text_logged_with_trace_on_one_line(self):
+        text = "สวัสดีครับ\nข้อความทดสอบ"
+        self.module.analyze_message.return_value = result("conversation")
+        with patch("builtins.print") as logs:
+            await self.post_events([private_event(text)])
+        incoming = [call for call in logs.call_args_list
+                    if any("📩 ข้อความเข้า:" in str(arg) for arg in call.args)]
+        self.assertEqual(len(incoming), 1)
+        self.assertRegex(incoming[0].args[0], r"^\[trace=[0-9a-f]{8}\]$")
+        self.assertEqual(incoming[0].args[1],
+                         f"📩 ข้อความเข้า: {json.dumps(text, ensure_ascii=False)}")
+
     async def test_private_replies_for_each_result(self):
         for number, (status, expected) in enumerate((
             ("conversation", "ส่งข้อความที่สงสัย"), ("risk_found", "พบสัญญาณเสี่ยง"),
