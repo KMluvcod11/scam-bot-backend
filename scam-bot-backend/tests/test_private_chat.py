@@ -46,6 +46,26 @@ class PrivateDetectionTests(unittest.TestCase):
             self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
             self.assertEqual(self.d.analyze_with_llm("ทดสอบ", 99, "spam", private=True), expected)
 
+    def test_private_prompt_distinguishes_submitted_conversation_from_bot_help(self):
+        # Checks the instructions sent to the SDK, NOT real model accuracy.
+        expected = result("no_risk_found")
+        self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
+        text = "พรุ่งนี้เข้ามาคุยเรื่องรายงานตอนสิบโมงนะครับ"
+        self.assertEqual(self.d.analyze_with_llm(text, 80.33, "ham", private=True), expected)
+        prompt = self.d.client.models.generate_content.call_args.kwargs["contents"]
+        self.assertIn("ห้ามใช้ conversation เพียงเพราะข้อความเป็นบทสนทนา", prompt)
+        self.assertIn("ไม่ใช่เพียงไม่รู้ตัวตนผู้ส่งหรือสถานที่นัดหมาย", prompt)
+        self.assertIn("คำทักทายที่ตามด้วยการชักชวนเสี่ยงต้องไม่ถูกข้าม", prompt)
+        self.assertTrue(prompt.rstrip().endswith(json.dumps(text, ensure_ascii=False)))
+        self.assertNotIn("conversation = สนทนาทั่วไปหรือถามนอกหน้าที่", prompt)
+
+    def test_group_prompt_does_not_receive_private_classification_instructions(self):
+        expected = {"is_scam": False, "risk_level": "low", "reason": "เหตุผลทดสอบ"}
+        self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
+        self.assertEqual(self.d.analyze_with_llm("นัดคุยงาน", 85, "ham"), expected)
+        prompt = self.d.client.models.generate_content.call_args.kwargs["contents"]
+        self.assertNotIn("ห้ามใช้ conversation", prompt)
+
     def test_bad_status_and_contradiction_fail_closed(self):
         for bad in ({k: v for k, v in result("no_risk_found").items() if k != "status"},
                     result("safe"), {**result("risk_found"), "is_scam": False},

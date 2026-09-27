@@ -5,6 +5,26 @@ from time import monotonic
 
 trace_id = ContextVar("bot_trace_id", default="-")
 
+# Only known status names may enter logs; never log message/details/response bodies.
+ERROR_STATUSES = frozenset({
+    "CANCELLED", "UNKNOWN", "INVALID_ARGUMENT", "DEADLINE_EXCEEDED",
+    "NOT_FOUND", "ALREADY_EXISTS", "PERMISSION_DENIED", "RESOURCE_EXHAUSTED",
+    "FAILED_PRECONDITION", "ABORTED", "OUT_OF_RANGE", "UNIMPLEMENTED",
+    "INTERNAL", "UNAVAILABLE", "DATA_LOSS", "UNAUTHENTICATED",
+})
+
+
+def error_summary(error):
+    """Return safe diagnostic fields without formatting the exception itself."""
+    fields = [f"type={type(error).__name__}"]
+    code = getattr(error, "code", None)
+    status = getattr(error, "status", None)
+    if type(code) is int and 400 <= code <= 599:
+        fields.append(f"code={code}")
+    if isinstance(status, str) and status in ERROR_STATUSES:
+        fields.append(f"status={status}")
+    return " ".join(fields)
+
 
 def log(*values, **kwargs):
     """ContextVar แยกรหัสแต่ละงาน และถูกส่งต่อไปยัง AnyIO thread pool."""
@@ -18,6 +38,6 @@ def timed_call(stage, operation, *args, **kwargs):
     try:
         result = operation(*args, **kwargs)
     except Exception as error:
-        log(f"[ERROR] stage={stage} elapsed={monotonic() - started:.2f}s type={type(error).__name__}")
+        log(f"[ERROR] stage={stage} elapsed={monotonic() - started:.2f}s {error_summary(error)}")
         raise
     return result
