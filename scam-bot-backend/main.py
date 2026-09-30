@@ -15,6 +15,7 @@ from detector import analyze_message
 from messaging import reply_to_line
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
+from detection_history import save_detection
 
 # 2. ประกาศแอปและตัวตรวจลายเซ็นจาก Channel Secret
 app = FastAPI(title="Scam Detection AI Bot")
@@ -154,10 +155,14 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
     except Exception as error:
         # ข้อผิดพลาดที่ไม่ได้คาดไว้: ไม่ตอบในกลุ่ม และไปทำ event ถัดไป
         print(f"[CHECK ERROR] stage=analysis type={type(error).__name__}")
+        await run_in_threadpool(save_detection, event, {
+            "status": "error", "is_scam": None, "error_stage": "analysis",
+        })
         return
 
     if result.get("status") == "error":
         print("[ACTION] ตรวจไม่ได้ ไม่ส่งคำเตือน และไม่สรุปว่าปลอดภัย")
+        await run_in_threadpool(save_detection, event, result)
         return
 
     # 6. สร้างคำเตือนและตอบด้วย reply_token ของ event นี้
@@ -177,15 +182,21 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
             sent = await run_in_threadpool(reply_to_line, reply_token, reply_msg)
         except Exception as error:
             print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
+            await run_in_threadpool(save_detection, event, result,
+                                    warning_attempted=True, warning_sent=False)
             return
         if sent:
             print("[ACTION] LINE API ยอมรับคำขอส่งคำเตือนแล้ว")
         else:
             print("[ACTION] ส่งคำเตือนไม่สำเร็จ ไม่ retry อัตโนมัติ")
+        await run_in_threadpool(save_detection, event, result,
+                                warning_attempted=True, warning_sent=sent)
     elif result.get("status") == "fallback":
         print("[ACTION] กฎสำรองไม่เข้าเกณฑ์เตือน แต่ LLM ตรวจไม่สำเร็จ")
     else:
         print("[ACTION] ไม่เข้าเกณฑ์แจ้งเตือน ดูขั้นตอนการตรวจจาก log ด้านบน")
+    if not result.get("is_scam"):
+        await run_in_threadpool(save_detection, event, result)
 
 
 PRIVATE_HELP = (
@@ -231,6 +242,7 @@ async def process_private_event(event: MessageEvent):
     """ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม."""
     print("==================== [NEW MESSAGE: PRIVATE] ====================")
     case_id = None
+    result = None
     if not isinstance(event.message, TextMessageContent):
         reply_msg = "ตอนนี้ยังตรวจรูปภาพ สติกเกอร์ เสียง วิดีโอ หรือไฟล์ไม่ได้ครับ กรุณาคัดลอกข้อความมาส่งแทน"
     else:
@@ -241,6 +253,7 @@ async def process_private_event(event: MessageEvent):
             print(f"[PRIVATE RESULT] status={result.get('status', 'error')}")
         except Exception as error:
             print(f"[CHECK ERROR] stage=analysis type={type(error).__name__}")
+            result = {"status": "error", "is_scam": None, "error_stage": "analysis"}
             reply_msg = PRIVATE_ERROR
         else:
             # บทเรียนเสียต้องไม่ทำให้ผลตรวจที่สำเร็จกลายเป็น error
@@ -258,6 +271,10 @@ async def process_private_event(event: MessageEvent):
         print("[ACTION] LINE API ยอมรับคำตอบส่วนตัวแล้ว" if sent else "[ACTION] ส่งคำตอบส่วนตัวไม่สำเร็จ")
     except Exception as error:
         print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
+        sent = False
+    if result is not None:
+        await run_in_threadpool(save_detection, event, result,
+                                warning_attempted=True, warning_sent=sent)
 
 
 async def process_learning_event(event: PostbackEvent):

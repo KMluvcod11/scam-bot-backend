@@ -12,6 +12,7 @@ load_dotenv(Path(__file__).with_name(".env"))
 GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+SUPABASE_HISTORY_KEY = os.getenv("SUPABASE_HISTORY_KEY") or SUPABASE_KEY
 LINE_CHANNEL_SECRET = os.getenv("CHANNEL_SECRET")
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("CHANNEL_ACCESS_TOKEN")
 

@@ -28,11 +28,14 @@ def load_app():
     detector.analyze_message = Mock(return_value={"is_scam": False})
     messaging = ModuleType("messaging")
     messaging.reply_to_line = Mock(return_value=True)
+    history = ModuleType("detection_history")
+    history.save_detection = Mock(return_value=True)
     path = Path(__file__).resolve().parents[1] / "main.py"
     spec = importlib.util.spec_from_file_location("webhook_under_test", path)
     module = importlib.util.module_from_spec(spec)
     with patch.object(sys, "path", [str(path.parent), *sys.path]), patch.dict(sys.modules, {
         "config": config, "detector": detector, "messaging": messaging,
+        "detection_history": history,
     }):
         spec.loader.exec_module(module)
     return module
