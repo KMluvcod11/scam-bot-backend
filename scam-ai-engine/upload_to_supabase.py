@@ -31,7 +31,7 @@ except Exception as e:
     uploaded_count = 0
 
 # 4. อ่านข้อมูลจาก CSV: ต้องมีคอลัมน์ thai_text และ label
-df = pd.read_csv('master_thai_dataset.csv', encoding='utf-8-sig')
+df = pd.read_csv('linebot_1000word.csv', encoding='utf-8-sig')
 total_rows = len(df)
 
 if uploaded_count >= total_rows:
