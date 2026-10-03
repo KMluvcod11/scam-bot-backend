@@ -1,4 +1,4 @@
-"""ติดรหัสงานสั้นใน log เดิม และแสดงเวลารอเฉพาะเมื่อ API ผิดพลาด."""
+"""ติดรหัสงานสั้นใน log เดิม และแสดงเวลาแต่ละขั้นโดยไม่เผยข้อมูลคำขอ."""
 import builtins
 from contextvars import ContextVar
 from time import monotonic
@@ -33,11 +33,13 @@ def log(*values, **kwargs):
 
 
 def timed_call(stage, operation, *args, **kwargs):
-    """เมื่อสำเร็จไม่เพิ่ม log; เมื่อผิดพลาดแสดงขั้นตอนและเวลาแล้วส่ง exception ต่อ."""
+    """จับเวลาโดยคงค่า return/exception เดิม; returned ไม่ใช่การยืนยัน HTTP success."""
     started = monotonic()
     try:
         result = operation(*args, **kwargs)
     except Exception as error:
         log(f"[ERROR] stage={stage} elapsed={monotonic() - started:.2f}s {error_summary(error)}")
         raise
+    outcome = f" returned={str(result).lower()}" if type(result) is bool else ""
+    log(f"[TIME] stage={stage} elapsed={monotonic() - started:.2f}s{outcome}")
     return result

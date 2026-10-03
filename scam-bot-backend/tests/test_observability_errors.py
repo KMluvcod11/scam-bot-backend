@@ -43,13 +43,19 @@ class ObservabilityErrorTests(unittest.TestCase):
     def test_error_without_sdk_fields_still_works(self):
         self.assertEqual(observability.error_summary(TimeoutError("SECRET")), "type=TimeoutError")
 
-    def test_success_has_no_extra_log_and_keeps_result(self):
+    def test_success_logs_duration_and_keeps_result(self):
         operation = Mock(return_value={"ok": True})
-        with patch("builtins.print") as output:
+        with patch.object(observability, 'monotonic', side_effect=[10, 12.5]), patch("builtins.print") as output:
             result = observability.timed_call("llm:test", operation, "text", private=True)
         self.assertEqual(result, {"ok": True})
         operation.assert_called_once_with("text", private=True)
-        output.assert_not_called()
+        self.assertIn('[TIME] stage=llm:test elapsed=2.50s', str(output.call_args_list))
+        self.assertNotIn('private', str(output.call_args_list))
+
+    def test_false_result_is_not_reported_as_success(self):
+        with patch('builtins.print') as output:
+            self.assertIs(observability.timed_call('history', lambda: False), False)
+        self.assertIn('returned=false', str(output.call_args_list))
 
 
 if __name__ == "__main__":

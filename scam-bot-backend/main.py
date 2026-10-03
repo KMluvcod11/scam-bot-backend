@@ -3,7 +3,10 @@
 import json
 import re
 from uuid import uuid4
-from bot_observability import log as print, trace_id
+from hashlib import sha256
+from datetime import datetime, timezone
+from time import monotonic
+from bot_observability import log as print, trace_id, timed_call
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
@@ -96,9 +99,16 @@ async def root():
 # 4. รับค่า: LINE ส่ง JSON body และลายเซ็นใน HTTP header
 @app.post("/webhook")
 async def line_webhook(request: Request, x_line_signature: str = Header(None)):
+    request_id = uuid4().hex[:8]
+    received = monotonic()
+    print(f"[WEBHOOK] request={request_id} received_at={datetime.now(timezone.utc).isoformat(timespec='milliseconds')}")
     # อ่าน body ต้นฉบับก่อนตรวจลายเซ็น ห้ามแก้ข้อความก่อนตรวจ
     body = await request.body()
-    events = parse_webhook(body, x_line_signature)
+    try:
+        events = parse_webhook(body, x_line_signature)
+    except HTTPException as error:
+        print(f"[WEBHOOK] request={request_id} rejected={error.status_code} elapsed={monotonic() - received:.2f}s")
+        raise
 
     # 5. กลุ่มตรวจเฉพาะ Text; ส่วนตัวตอบด้วยเมื่อสื่อที่ส่งมายังไม่รองรับ
     for event in events:
@@ -106,6 +116,8 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
             isinstance(event.message, TextMessageContent) or event.source.type == "user"
         )):
             claim = event_guard.claim(event.webhook_event_id)
+            event_ref = sha256(event.webhook_event_id.encode()).hexdigest()[:12]
+            print(f"[EVENT] request={request_id} event={event_ref} claim={claim} dispatch_after={monotonic() - received:.2f}s")
             if claim == "duplicate":
                 print("[DUPLICATE] ข้าม event เดิมที่กำลังทำหรือเคยทำแล้ว")
                 continue
@@ -120,15 +132,21 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
             print("[SKIP] ไม่ใช่ข้อความ Text ที่บอทรองรับ")
 
     # คืน 200 หลังพยายามทำครบ ไม่ใช่หลักฐานว่าทุกข้อความตรวจหรือส่งสำเร็จ
+    print(f"[WEBHOOK] request={request_id} events={len(events)} elapsed={monotonic() - received:.2f}s")
     return JSONResponse(content="OK", status_code=200)
 
 
 async def process_text_event(event: MessageEvent | PostbackEvent):
     """สร้างรหัสสุ่มเฉพาะงาน ไม่ใช้ LINE user ID หรือ token เป็นรหัส log."""
     token = trace_id.set(uuid4().hex[:8])
+    started = monotonic()
+    event_id = getattr(event, 'webhook_event_id', None)
+    event_ref = sha256(event_id.encode()).hexdigest()[:12] if isinstance(event_id, str) else '-'
+    print(f"[EVENT] event={event_ref} processing")
     try:
         await _process_text_event(event)
     finally:
+        print(f"[TIME] stage=event_total elapsed={monotonic() - started:.2f}s")
         trace_id.reset(token)
 
 
@@ -155,14 +173,14 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
     except Exception as error:
         # ข้อผิดพลาดที่ไม่ได้คาดไว้: ไม่ตอบในกลุ่ม และไปทำ event ถัดไป
         print(f"[CHECK ERROR] stage=analysis type={type(error).__name__}")
-        await run_in_threadpool(save_detection, event, {
+        await run_in_threadpool(timed_call, "history", save_detection, event, {
             "status": "error", "is_scam": None, "error_stage": "analysis",
         })
         return
 
     if result.get("status") == "error":
         print("[ACTION] ตรวจไม่ได้ ไม่ส่งคำเตือน และไม่สรุปว่าปลอดภัย")
-        await run_in_threadpool(save_detection, event, result)
+        await run_in_threadpool(timed_call, "history", save_detection, event, result)
         return
 
     # 6. สร้างคำเตือนและตอบด้วย reply_token ของ event นี้
@@ -182,21 +200,21 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
             sent = await run_in_threadpool(reply_to_line, reply_token, reply_msg)
         except Exception as error:
             print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
-            await run_in_threadpool(save_detection, event, result,
+            await run_in_threadpool(timed_call, "history", save_detection, event, result,
                                     warning_attempted=True, warning_sent=False)
             return
         if sent:
             print("[ACTION] LINE API ยอมรับคำขอส่งคำเตือนแล้ว")
         else:
             print("[ACTION] ส่งคำเตือนไม่สำเร็จ ไม่ retry อัตโนมัติ")
-        await run_in_threadpool(save_detection, event, result,
+        await run_in_threadpool(timed_call, "history", save_detection, event, result,
                                 warning_attempted=True, warning_sent=sent)
     elif result.get("status") == "fallback":
         print("[ACTION] กฎสำรองไม่เข้าเกณฑ์เตือน แต่ LLM ตรวจไม่สำเร็จ")
     else:
         print("[ACTION] ไม่เข้าเกณฑ์แจ้งเตือน ดูขั้นตอนการตรวจจาก log ด้านบน")
     if not result.get("is_scam"):
-        await run_in_threadpool(save_detection, event, result)
+        await run_in_threadpool(timed_call, "history", save_detection, event, result)
 
 
 PRIVATE_HELP = (
@@ -273,7 +291,7 @@ async def process_private_event(event: MessageEvent):
         print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
         sent = False
     if result is not None:
-        await run_in_threadpool(save_detection, event, result,
+        await run_in_threadpool(timed_call, "history", save_detection, event, result,
                                 warning_attempted=True, warning_sent=sent)
 
 

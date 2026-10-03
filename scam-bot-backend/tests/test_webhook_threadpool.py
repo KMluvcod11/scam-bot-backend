@@ -55,6 +55,42 @@ def text_event(text="ข้อความทดสอบ", number=1):
 
 
 class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_receipt_duplicate_and_total_logs_without_identifiers(self):
+        with patch('builtins.print') as output:
+            first = await self.post_events([text_event()])
+            second = await self.post_events([text_event()])
+        self.assertEqual((first.status_code, second.status_code), (200, 200))
+        self.module.analyze_message.assert_called_once()
+        logs = str(output.call_args_list)
+        for marker in ('received_at=', 'claim=new', 'claim=duplicate', 'dispatch_after=', 'stage=history', 'stage=event_total'):
+            self.assertIn(marker, logs)
+        for secret in ('event-1', 'reply-1', 'offline-user', 'offline-test-secret'):
+            self.assertNotIn(secret, logs)
+        fingerprint = hashlib.sha256(b'event-1').hexdigest()[:12]
+        self.assertEqual(logs.count('event=' + fingerprint), 3)
+
+    async def test_rejected_webhook_logs_no_payload(self):
+        with patch('builtins.print') as output:
+            response = await self.post_events([text_event('SECRET_PAYLOAD')], valid_signature=False)
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('rejected=400', str(output.call_args_list))
+        self.assertNotIn('SECRET_PAYLOAD', str(output.call_args_list))
+
+    async def test_private_history_false_has_timing_and_preserves_reply(self):
+        event = text_event()
+        event['source'] = {'type': 'user', 'userId': 'offline-user'}
+        self.module.analyze_message.return_value = {'status': 'no_risk_found', 'is_scam': False, 'reason': 'test'}
+        self.module.save_detection.return_value = False
+        with patch('builtins.print') as output:
+            response = await self.post_events([event])
+        self.assertEqual(response.status_code, 200)
+        self.module.reply_to_line.assert_called_once()
+        self.module.save_detection.assert_called_once()
+        logs = str(output.call_args_list)
+        self.assertIn('stage=history', logs)
+        self.assertIn('returned=false', logs)
+        self.assertIn('stage=event_total', logs)
+
     async def asyncSetUp(self):
         self.module = load_app()
         self.http = httpx.AsyncClient(

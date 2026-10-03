@@ -42,11 +42,11 @@ class TimeoutTests(unittest.TestCase):
             self.assertEqual(result, {"status": "error", "is_scam": None, "error_stage": "llm"})
             self.assertEqual(d.client.models.generate_content.call_count, 1)
 
-    def test_only_errors_add_timing_logs_without_raw_exception(self):
+    def test_success_and_errors_add_timing_without_raw_exception(self):
         timed_call = self.detector.timed_call
         with patch("builtins.print") as output:
             self.assertEqual(timed_call("test", lambda: 42), 42)
-            output.assert_not_called()
+            self.assertIn('[TIME] stage=test elapsed=', str(output.call_args_list))
             with self.assertRaises(ValueError):
                 timed_call("test", lambda: (_ for _ in ()).throw(ValueError("secret")))
         logs = str(output.call_args_list)
