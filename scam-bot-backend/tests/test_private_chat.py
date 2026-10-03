@@ -59,6 +59,18 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertTrue(prompt.rstrip().endswith(json.dumps(text, ensure_ascii=False)))
         self.assertNotIn("conversation = สนทนาทั่วไปหรือถามนอกหน้าที่", prompt)
 
+    def test_private_prompt_limits_claims_to_text_evidence(self):
+        # Verifies prompt wiring, not whether the real model follows it.
+        expected = result("risk_found")
+        self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
+        text = "ได้รับรางวัล โอนค่าธรรมเนียมภายใน 10 นาที"
+        self.assertEqual(self.d.analyze_with_llm(text, 85, "spam", private=True), expected)
+        prompt = self.d.client.models.generate_content.call_args.kwargs["contents"]
+        self.assertIn("ห้ามฟันธงว่าเป็นรางวัลปลอม", prompt)
+        self.assertIn("มีการขอค่าธรรมเนียมก่อนรับรางวัลและกำหนดเวลาเร่งให้โอน", prompt)
+        self.assertIn('ไม่ตีความ "เริ่มงานได้ทันที" ว่าเร่งโอนเงิน', prompt)
+        self.assertTrue(prompt.rstrip().endswith(json.dumps(text, ensure_ascii=False)))
+
     def test_group_prompt_does_not_receive_private_classification_instructions(self):
         expected = {"is_scam": False, "risk_level": "low", "reason": "เหตุผลทดสอบ"}
         self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))

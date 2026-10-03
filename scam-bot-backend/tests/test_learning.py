@@ -41,6 +41,23 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("รับประกันกำไร", lesson)
         self.module.analyze_message.assert_not_called()
 
+    async def test_time_word_lesson_asks_about_context_without_changing_result(self):
+        for number, text in enumerate((
+            "เริ่มงานได้ทันที ก่อนเริ่มโอนค่าประกัน 399 บาท",
+            "โอนเงินทันที ไม่งั้นหมดสิทธิ์",
+        ), 1):
+            with self.subTest(text=text):
+                case_id = await self.create_case(text, number)
+                lesson = self.module.lesson_store.get(case_id, "offline-user")
+                self.assertIn("ตรวจว่าคำบอกเวลานี้เร่งให้ทำอะไร", lesson)
+                self.assertIn("‘เริ่มงานได้ทันที’ ไม่ได้หมายถึงเร่งโอนเงิน", lesson)
+                self.assertIn("หากเร่งให้จ่ายเงินหรือส่งข้อมูลก่อนตรวจสอบ", lesson)
+                self.assertNotIn("การเร่งเวลาอาจทำให้ไม่มีเวลาตรวจสอบ", lesson)
+                self.assertEqual(self.module.analyze_message.return_value, result("risk_found"))
+        self.module.analyze_message.return_value = result("no_risk_found")
+        await self.post_events([private_event("เริ่มงานได้ทันที ไม่มีค่าสมัคร", 3)])
+        self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
+
     async def test_owner_mismatch_unknown_and_expired_do_not_disclose(self):
         now = [0]
         self.module.lesson_store = self.module.LessonStore(clock=lambda: now[0])
