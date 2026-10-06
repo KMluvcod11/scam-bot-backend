@@ -1,8 +1,27 @@
 """ส่งคำเตือนกลับ LINE และรายงานว่าส่งสำเร็จหรือไม่."""
 # 1. นำเข้า HTTP client และ token จาก config
 import requests
+from urllib.parse import quote
 from bot_observability import log as print, timed_call
 from config import LINE_CHANNEL_ACCESS_TOKEN
+
+
+def get_group_name(group_id: str) -> str | None:
+    """อ่านชื่อกลุ่มจาก LINE; ล้มเหลวคืน None ไม่พิมพ์ token/ชื่อกลุ่มใน log."""
+    try:
+        response = requests.get(
+            f"https://api.line.me/v2/bot/group/{quote(group_id, safe='')}/summary",
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict) or not isinstance(data.get("groupName"), str) or not data["groupName"].strip():
+            raise ValueError("Invalid group summary")
+        return data["groupName"]
+    except (requests.RequestException, ValueError) as error:
+        print(f"[GROUP ERROR] stage=line_summary type={type(error).__name__}")
+        return None
 
 
 # 2. รับค่า: reply_token ของ event และ message_text ที่ต้องการตอบ

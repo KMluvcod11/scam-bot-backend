@@ -12,13 +12,13 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import MessageEvent, PostbackEvent, TextMessageContent
+from linebot.v3.webhooks import JoinEvent, LeaveEvent, MessageEvent, PostbackEvent, TextMessageContent
 from config import LINE_CHANNEL_SECRET
 from detector import analyze_message
 from messaging import reply_to_line
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
-from detection_history import save_detection
+from detection_history import save_detection, save_group_join, save_group_leave
 
 # 2. ประกาศแอปและตัวตรวจลายเซ็นจาก Channel Secret
 app = FastAPI(title="Scam Detection AI Bot")
@@ -45,6 +45,17 @@ def parse_webhook(body: bytes, signature: str | None):
         for raw in payload["events"]:
             if not isinstance(raw, dict) or not isinstance(raw.get("type"), str):
                 raise ValueError("Invalid event")
+            if raw["type"] in {"join", "leave"}:
+                source = raw.get("source")
+                if not isinstance(source, dict) or source.get("type") not in {"group", "room"}:
+                    raise ValueError("Invalid group event source")
+                source_key = "groupId" if source["type"] == "group" else "roomId"
+                if not isinstance(source.get(source_key), str) or not source[source_key].strip():
+                    raise ValueError("Missing group event source ID")
+                if not isinstance(raw.get("webhookEventId"), str) or not raw["webhookEventId"].strip():
+                    raise ValueError("Missing group event ID")
+                if type(raw.get("timestamp")) is not int or not 0 <= raw["timestamp"] <= 253402300799000:
+                    raise ValueError("Invalid group event timestamp")
             if raw["type"] == "postback":
                 source, postback = raw.get("source"), raw.get("postback")
                 if not isinstance(source, dict) or source.get("type") not in {"user", "group", "room"}:
@@ -76,6 +87,10 @@ def parse_webhook(body: bytes, signature: str | None):
         events = parser.parse(body_text, signature)
         # SDK อาจแปลงข้อความที่ข้อมูลไม่ครบเป็น UnknownEvent จึงตรวจ text ซ้ำก่อนใช้งาน
         for raw, event in zip(payload["events"], events):
+            if raw["type"] == "join" and not isinstance(event, JoinEvent):
+                raise ValueError("Invalid join event")
+            if raw["type"] == "leave" and not isinstance(event, LeaveEvent):
+                raise ValueError("Invalid leave event")
             if raw["type"] == "postback" and not isinstance(event, PostbackEvent):
                 raise ValueError("Invalid postback event")
             if raw["type"] == "message" and raw["source"]["type"] == "user" and not isinstance(event, MessageEvent):
@@ -116,7 +131,9 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
         is_supported_message = isinstance(event, MessageEvent) and (
             isinstance(event.message, TextMessageContent) or event.source.type == "user"
         )
-        if is_private_postback or is_supported_message:
+        is_group_join = isinstance(event, JoinEvent) and event.source.type == "group"
+        is_group_leave = isinstance(event, LeaveEvent) and event.source.type == "group"
+        if is_private_postback or is_supported_message or is_group_join or is_group_leave:
             claim = event_guard.claim(event.webhook_event_id)
             event_ref = sha256(event.webhook_event_id.encode()).hexdigest()[:12]
             print(f"[EVENT] request={request_id} event={event_ref} claim={claim} dispatch_after={monotonic() - received:.2f}s")
@@ -127,7 +144,12 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
                 print("[BUSY] ที่เก็บ event ID เต็ม ยังไม่รับ event ใหม่")
                 raise HTTPException(status_code=503, detail="Event capacity reached")
             try:
-                await process_text_event(event)
+                if is_group_join:
+                    await run_in_threadpool(timed_call, "group_join", save_group_join, event)
+                elif is_group_leave:
+                    await run_in_threadpool(timed_call, "group_leave", save_group_leave, event)
+                else:
+                    await process_text_event(event)
             finally:
                 event_guard.finish(event.webhook_event_id)
         else:

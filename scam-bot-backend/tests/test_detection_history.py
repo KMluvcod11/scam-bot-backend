@@ -16,11 +16,13 @@ def load_history():
     supabase.create_client = Mock()
     supabase_client = ModuleType("supabase.client")
     supabase_client.ClientOptions = lambda **kwargs: kwargs
+    messaging = ModuleType("messaging")
+    messaging.get_group_name = Mock(return_value=None)
     path = Path(__file__).resolve().parents[1] / "detection_history.py"
     spec = importlib.util.spec_from_file_location("history_under_test", path)
     module = importlib.util.module_from_spec(spec)
     with patch.object(sys, "path", [str(path.parent), *sys.path]), patch.dict(sys.modules, {
-        "config": config, "supabase": supabase, "supabase.client": supabase_client,
+        "config": config, "supabase": supabase, "supabase.client": supabase_client, "messaging": messaging,
     }):
         spec.loader.exec_module(module)
     return module

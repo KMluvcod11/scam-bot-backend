@@ -1,6 +1,30 @@
 # ความเสถียรของ LINE Webhook
 
+## บันทึกเมื่อบอตเข้ากลุ่ม
+
+- รับ `join` ที่ source เป็น `group` หลังตรวจลายเซ็น, groupId, event ID และ timestamp; ไม่ใช่ `memberJoined` ของสมาชิกคนอื่น
+- ใช้ EventGuard เดิมและทำงานใน thread pool: `save_group_join` บันทึก `line_sources` ก่อน แล้วขอชื่อผ่าน LINE Group Summary API (timeout 10 วินาที)
+- เก็บ `bot_joined_at` จากเวลา event เป็นเวลาเข้าร่วมครั้งล่าสุดที่ได้รับ ไม่เดาจากเวลาข้อความแรก และไม่เพิ่ม `detection_logs`/ยอดสแกน
+- ดึงชื่อไม่สำเร็จ: เก็บกลุ่มไว้และไม่เขียน null ทับชื่อเดิม; บันทึกฐานล้มเหลว: log `GROUP ERROR` และคืน False แต่ webhook ยังตอบ 200 ตามนโยบายไม่ retry เดิม
+- join ซ้ำใช้รหัส event กันซ้ำใน process เดียวตามข้อจำกัดด้านล่าง ไม่มีคิวถาวรหรือ retry งานดึงชื่อ
+- กลุ่มที่มีอยู่ก่อนอัปเดตจะไม่ดึงชื่อย้อนหลังเอง; ทดลองกับกลุ่มทดสอบใหม่ หรือเชิญบอตออก/เข้าใหม่ด้วยตนเอง แล้วรีเฟรช Dashboard
+- ยังไม่ดึงจำนวนสมาชิกหรือติดตามการเปลี่ยนชื่อ; สถานะขึ้นกับ join/leave ที่ได้รับ ไม่ใช่การสอบถามสมาชิกแบบสด
+- ทดสอบ: restart บอต → เชิญเข้ากลุ่มทดสอบ → ต้องเห็น `GROUP JOIN saved=true name_loaded=true` → refresh Dashboard; จำนวนสแกนไม่เพิ่มจาก join
+- อ้างอิง: https://developers.line.biz/en/reference/messaging-api/#get-group-summary
+
 ## การกัน event ซ้ำ
+
+### เมื่อบอตออกจากกลุ่ม
+
+- รับ `leave` ของ group โดยตรวจลายเซ็น, groupId, event ID และ timestamp เหมือน join; ไม่ต้องมี replyToken และไม่ส่งข้อความตอบ/เรียก AI
+- `save_group_leave` update เฉพาะ `is_active=false` ของกลุ่มนั้น ไม่ลบแถว ชื่อ หรือ detection_logs; ไม่เพิ่มยอดสแกน
+- Dashboard API กรองเฉพาะกลุ่ม `is_active=true` ในรายการกลุ่มที่เชื่อมต่อ แต่หน้าประวัติยังใช้ข้อมูลเดิมทั้งหมด; ต้องรีเฟรชหน้าเพื่อโหลดใหม่
+- เชิญกลับ: join ใช้ `line_source_id` เดิมและตั้ง active ไม่สร้างรายการกลุ่มซ้ำ
+- ฐานข้อมูลล้มเหลวหรือไม่พบแถว: คืน False พร้อม log; webhook ยังตอบ 200 ตามนโยบายเดิม ไม่มี retry อัตโนมัติ
+- กลุ่มที่ออกก่อนติดตั้งโค้ดนี้จะไม่ถูกแก้ย้อนหลัง ต้องทดสอบเชิญเข้าแล้วออกอีกครั้งหลัง restart ทั้งบอตและ Dashboard API
+- ponytail: สถานะใช้ลำดับงานที่เขียนสำเร็จ; ถ้าต้องรองรับ event มาช้า/สลับลำดับข้ามการรีสตาร์ต ให้เพิ่มเวลา lifecycle event และ conditional update ในฐานข้อมูล
+- ทดสอบ: join → refresh เห็นกลุ่ม → นำบอตออก → log `GROUP LEAVE saved=true` → refresh กลุ่มหาย แต่ประวัติยังอยู่ → เชิญกลับ กลุ่มเดิมกลับมา
+- อ้างอิง leave event: https://developers.line.biz/en/reference/messaging-api/#leave-event
 
 - ใช้ `webhookEventId` ไม่ใช้ข้อความหรือ `isRedelivery` เป็นตัวตัดสิน
 - `event_guard.py` ตรวจและจอง ID พร้อมกันด้วย lock ก่อนเริ่มวิเคราะห์
