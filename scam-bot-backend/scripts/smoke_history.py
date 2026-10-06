@@ -7,21 +7,19 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pathlib import Path
 
-load_dotenv(Path(__file__).with_name(".env"))
-key = os.getenv("SUPABASE_HISTORY_KEY")
-if not key or key.startswith("replace-with-"):
-    raise SystemExit("SUPABASE_HISTORY_KEY is missing")
-
-# This process never imports the detector or calls Gemini/LINE.
-# config.py still validates those unrelated settings at import time.
-os.environ.setdefault("SUPABASE_KEY", key)
-for name in ("GEMINI_API_KEY", "CHANNEL_SECRET", "CHANNEL_ACCESS_TOKEN"):
-    os.environ.setdefault(name, "unused-in-supabase-smoke-test")
-
-from detection_history import _history_client, save_detection
-
-
 def main():
+    import sys
+    backend = Path(__file__).resolve().parents[1]
+    load_dotenv(backend / '.env')
+    key = os.getenv('SUPABASE_HISTORY_KEY')
+    if not key or key.startswith('replace-with-'):
+        raise SystemExit('SUPABASE_HISTORY_KEY is missing')
+    os.environ.setdefault('SUPABASE_KEY', key)
+    for name in ('GEMINI_API_KEY', 'CHANNEL_SECRET', 'CHANNEL_ACCESS_TOKEN'):
+        os.environ.setdefault(name, 'unused-in-supabase-smoke-test')
+    sys.path.insert(0, str(backend))
+    from detection_history import _history_client, save_detection
+
     event_id = "backend-smoke-test-" + uuid4().hex
     event = SimpleNamespace(
         source=SimpleNamespace(type="group", group_id="backend-smoke-test-group"),

@@ -1,36 +1,12 @@
-# หน้าที่: เตรียม dataset ภาษาไทยจากอีเมลภาษาอังกฤษ ไม่ใช่ส่วนตอบ LINE
-# ใช้ SDK google.generativeai คนละชุดกับ backend; ต้องมี CSV ต้นทางก่อนรัน
-# การรันหรือ import เรียก API จริงและเขียน CSV ผลลัพธ์
-
-# 1. นำเข้าเครื่องมือ
-import pandas as pd
-import google.generativeai as genai
-import time
+"""แปลชุดข้อมูลเมื่อสั่งรันเท่านั้น; import ไม่เรียก API หรือเขียน CSV."""
 import os
+import time
+from pathlib import Path
+import pandas as pd
 from dotenv import load_dotenv
 
-# 2. โหลด API key และประกาศโมเดล
-load_dotenv()
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-model = genai.GenerativeModel('gemini-flash-lite-latest')
-
-# 3. รับค่า: ชื่อ CSV ต้นทาง/ปลายทาง อ้างอิงจาก working directory
-input_file = 'phishing_sampled_1500.csv'
-output_file = 'translated_phishing_line_1500.csv'
-
-print(f"1. กำลังอ่านไฟล์ {input_file}...")
-
-try:
-    df = pd.read_csv(input_file, encoding='utf-8-sig')
-    total_rows = len(df)
-    print(f"เจอข้อมูลทั้งหมด {total_rows} แถว พร้อมลุย!")
-except Exception as e:
-    print(f"อ่านไฟล์ไม่สำเร็จ: {e}")
-    exit()
-
-# 4. รับ row (label, text) และ index → คืนข้อความไทยหรือข้อความแจ้งแปลไม่สำเร็จ
-def translate_to_line(row, index):
+def translate_to_line(row, model):
     label = str(row['label'])
     text = str(row['text'])
 
@@ -58,45 +34,67 @@ def translate_to_line(row, index):
         {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"}
     ]
 
-    # 4.1 จำกัดการลอง API สูงสุด 3 ครั้งต่อข้อความ
-    max_retries = 3
-    for attempt in range(max_retries):
+    for attempt in range(3):
         try:
             response = model.generate_content(prompt, safety_settings=safety_settings)
+            text = response.text.strip()
+            if not text or text == "แปลไม่สำเร็จ":
+                raise ValueError("Empty translation")
             time.sleep(5)
-            print(f"[{index+1}/{total_rows}] {label.upper()} -> LINE -  สำเร็จ")
-            return response.text.strip()
-        except Exception as e:
-            if "429" in str(e):
-                print(f"[{index+1}/{total_rows}]  โควตาเต็ม (รอ 30 วิ)...")
-                time.sleep(30)
-            else:
-                print(f"[{index+1}/{total_rows}]  Error: {e} (ลองใหม่...)")
-                time.sleep(5)
-            if attempt == max_retries - 1:
-                return "แปลไม่สำเร็จ"
+            return text
+        except Exception as error:
+            if attempt == 2:
+                raise
+            print(f"ลองใหม่: {type(error).__name__}")
+            time.sleep(30 if "429" in str(error) else 5)
 
-print(f"\n2. เริ่มกระบวนการแปลงร่างข้อมูลเป็นแชท LINE ทั้งหมด {total_rows} ข้อความ...")
 
-# 5. วนแปลและพักผลลัพธ์; สำรองไฟล์ทุก 50 แถว
-translated_texts = []
-try:
-    for index, row in df.iterrows():
-        result = translate_to_line(row, index)
-        translated_texts.append(result)
+def translate_rows(df, model, output_file, failed_file):
+    successful, failed = [], []
+    interrupted = False
 
-        # เซฟไฟล์สำรองทุก 50 แถว
-        if (index + 1) % 50 == 0:
-            temp_df = df.iloc[:index+1].copy()
-            temp_df['thai_text'] = translated_texts
-            temp_df[['label', 'thai_text']].to_csv('temp_phishing_line_backup.csv', index=False, encoding='utf-8-sig')
+    def save_progress():
+        pd.DataFrame(successful, columns=['label', 'thai_text']).to_csv(output_file, index=False, encoding='utf-8-sig')
+        pd.DataFrame(failed, columns=['source_row', 'error_type']).to_csv(failed_file, index=False, encoding='utf-8-sig')
 
-except KeyboardInterrupt:
-    print("\n หยุดการทำงานชั่วคราว! กำลังบันทึกข้อมูลที่ทำเสร็จแล้ว...")
+    try:
+        for number, (_, row) in enumerate(df.iterrows(), 1):
+            try:
+                text = translate_to_line(row, model)
+                successful.append({'label': row['label'], 'thai_text': text})
+            except Exception as error:
+                failed.append({'source_row': number, 'error_type': type(error).__name__})
+            print(f"[{number}/{len(df)}] สำเร็จ {len(successful)} / ไม่สำเร็จ {len(failed)}")
+            if number % 50 == 0:
+                save_progress()
+    except KeyboardInterrupt:
+        interrupted = True
+    save_progress()
+    return 130 if interrupted else (1 if failed else 0)
 
-# 6. บันทึกผลเท่าที่ประมวลผลแล้วเป็น CSV (label, thai_text)
-df_final = df.iloc[:len(translated_texts)].copy()
-df_final['thai_text'] = translated_texts
-df_final[['label', 'thai_text']].to_csv(output_file, index=False, encoding='utf-8-sig')
 
-print(f"\n บันทึกไฟล์ {output_file} สำเร็จเรียบร้อยแล้ว!")
+def main():
+    folder = Path(__file__).resolve().parent
+    output_file = folder / 'translated_phishing_line_1500.csv'
+    failed_file = folder / 'translated_phishing_line_1500_failed.csv'
+    if output_file.exists() or failed_file.exists():
+        print('มีไฟล์ผลลัพธ์แล้ว กรุณาเก็บสำรองก่อนรันใหม่')
+        return 1
+    try:
+        df = pd.read_csv(folder / 'phishing_sampled_1500.csv', encoding='utf-8-sig')
+        if not {'label', 'text'}.issubset(df.columns) or df[['label', 'text']].isna().any().any():
+            raise ValueError('Invalid CSV')
+        if not df['label'].isin(['Phishing Email', 'Safe Email']).all():
+            raise ValueError('Invalid label')
+        import google.generativeai as genai
+        load_dotenv(folder / '.env')
+        genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+        model = genai.GenerativeModel('gemini-flash-lite-latest')
+        return translate_rows(df, model, output_file, failed_file)
+    except Exception as error:
+        print(f'หยุด: {type(error).__name__}')
+        return 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

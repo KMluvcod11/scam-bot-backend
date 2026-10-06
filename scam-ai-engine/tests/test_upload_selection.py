@@ -1,5 +1,4 @@
-"""Offline check: extract only selection function; never import the uploader."""
-import ast
+"""Offline checks: importing the uploader does not start an upload."""
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
@@ -8,10 +7,8 @@ import sys
 import unittest
 import pandas as pd
 
-tree = ast.parse(Path(__file__).with_name('upload_to_supabase.py').read_text(encoding='utf-8'))
-scope = {}
-exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'select_new_rows'], type_ignores=[]), '<selection>', 'exec'), scope)
-select = scope['select_new_rows']
+SCRIPT = Path(__file__).resolve().parents[1] / 'upload_to_supabase.py'
+select = runpy.run_path(str(SCRIPT))['select_new_rows']
 
 def database(pages):
     db = Mock()
@@ -29,10 +26,12 @@ class SelectionTests(unittest.TestCase):
         with patch.object(sys, 'argv', ['upload_to_supabase.py', '--limit', '5']), patch('dotenv.load_dotenv'), patch('supabase.create_client', return_value=db), patch('google.genai.Client', return_value=ai), patch('pandas.read_csv', return_value=df), patch('time.sleep'), patch('builtins.print'):
             if fail_insert:
                 with self.assertRaises(SystemExit) as error:
-                    runpy.run_path(str(Path(__file__).with_name('upload_to_supabase.py')))
+                    runpy.run_path(str(SCRIPT), run_name='__main__')
                 self.assertEqual(error.exception.code, 1)
             else:
-                runpy.run_path(str(Path(__file__).with_name('upload_to_supabase.py')))
+                with self.assertRaises(SystemExit) as error:
+                    runpy.run_path(str(SCRIPT), run_name='__main__')
+                self.assertEqual(error.exception.code, 0)
         self.assertEqual(ai.models.embed_content.call_count, 5)
         db.table.return_value.insert.assert_called_once()
         self.assertEqual(len(db.table.return_value.insert.call_args.args[0]), 5)

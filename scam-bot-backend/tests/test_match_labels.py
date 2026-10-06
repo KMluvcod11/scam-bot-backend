@@ -80,6 +80,22 @@ class MatchLabelTests(unittest.TestCase):
         with patch("builtins.print") as output:
             self.assertEqual(self.detector.find_similarity(self.text), (90.0, "ham"))
         self.assertIn("label=ham", str(output.call_args_list))
+        self.assertNotIn("ตัวอย่าง", str(output.call_args_list))
+
+    def test_llm_reason_is_not_logged(self):
+        self.answer(False)
+        with patch('builtins.print') as output:
+            self.detector.analyze_with_llm(self.text, 90, 'ham')
+        self.assertNotIn('เหตุผลทดสอบ', str(output.call_args_list))
+
+    def test_short_risky_message_failure_never_uses_score_fallback(self):
+        self.detector.SCAM_TRIGGERS = ['otp']
+        self.match(0.99, 'spam')
+        self.detector.client.models.generate_content.side_effect = RuntimeError('PRIVATE')
+        with patch('builtins.print'):
+            result = self.detector.analyze_message('ส่ง OTP มา')
+        self.assertEqual(result['status'], 'error')
+        self.assertIsNone(result['is_scam'])
 
     def test_unspecified_label_cannot_trigger_fallback_warning(self):
         self.detector.client.models.generate_content.side_effect = RuntimeError("offline")

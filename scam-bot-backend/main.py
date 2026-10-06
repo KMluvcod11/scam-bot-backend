@@ -112,9 +112,11 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
 
     # 5. กลุ่มตรวจเฉพาะ Text; ส่วนตัวตอบด้วยเมื่อสื่อที่ส่งมายังไม่รองรับ
     for event in events:
-        if (isinstance(event, PostbackEvent) and event.source.type == "user") or (isinstance(event, MessageEvent) and (
+        is_private_postback = isinstance(event, PostbackEvent) and event.source.type == "user"
+        is_supported_message = isinstance(event, MessageEvent) and (
             isinstance(event.message, TextMessageContent) or event.source.type == "user"
-        )):
+        )
+        if is_private_postback or is_supported_message:
             claim = event_guard.claim(event.webhook_event_id)
             event_ref = sha256(event.webhook_event_id.encode()).hexdigest()[:12]
             print(f"[EVENT] request={request_id} event={event_ref} claim={claim} dispatch_after={monotonic() - received:.2f}s")
@@ -164,7 +166,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
     reply_token = event.reply_token
 
     print("==================== [NEW GROUP Message] ====================")
-    print(f"📩 ข้อความเข้า: \"{user_text}\"")
+    print(f"[MESSAGE] source=group_or_room chars={len(user_text)}")
 
     # ให้ thread pool รอ AI/ฐานข้อมูล เพื่อไม่บล็อกการรับคำขออื่น
     # await ยังรอผลของข้อความนี้ก่อนสร้างคำเตือน ไม่ได้ปล่อยงานทิ้งไว้เบื้องหลัง
@@ -264,7 +266,7 @@ async def process_private_event(event: MessageEvent):
     if not isinstance(event.message, TextMessageContent):
         reply_msg = "ตอนนี้ยังตรวจรูปภาพ สติกเกอร์ เสียง วิดีโอ หรือไฟล์ไม่ได้ครับ กรุณาคัดลอกข้อความมาส่งแทน"
     else:
-        print(f"📩 ข้อความเข้า: {json.dumps(event.message.text, ensure_ascii=False)}")
+        print(f"[MESSAGE] source=user chars={len(event.message.text)}")
         try:
             result = await run_in_threadpool(analyze_message, event.message.text, private=True)
             reply_msg = private_reply(result, event.message.text)

@@ -64,11 +64,19 @@ class TriggerRoutingTests(unittest.TestCase):
                 self.assertEqual(llm.call_count, calls)
 
     def test_no_keyword_and_short_text_rules_unchanged(self):
-        for text in ("พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม", "ตำรวจ"):
+        for text in ("พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม", "กินข้าวยัง"):
             with self.subTest(text=text):
                 result, llm = self.route(text, 84)
                 llm.assert_not_called()
                 self.assertIs(result["is_scam"], False)
+
+    def test_short_risky_words_use_context_even_at_extreme_scores(self):
+        for text in ('ส่ง OTP มา', 'ส่ง otp มา', 'ขอรหัสผ่าน', 'โอนเงินทันที', 'อย่าส่ง OTP ให้ใคร'):
+            for score in (0, 64, 99):
+                with self.subTest(text=text, score=score):
+                    result, llm = self.route(text, score)
+                    llm.assert_called_once_with(text, score, 'spam', private=True)
+                    self.assertIs(result['is_scam'], False)
 
 
 if __name__ == "__main__":

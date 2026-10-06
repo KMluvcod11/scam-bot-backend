@@ -36,6 +36,8 @@ class DetectionUnavailable(Exception):
 # is_scam=False หมายถึงไม่แจ้งเตือนตามกฎ ไม่ใช่รับประกันว่าปลอดภัย
 def analyze_message(text: str, *, private: bool = False) -> dict:
     clean_text = text.strip().lower()
+    has_trigger = any(keyword in clean_text for keyword in SCAM_TRIGGERS)
+    short_risk_message = len(clean_text) <= 25 and has_trigger
 
     # ส่วนตัวเป็นคำขอตรวจ: ไม่ใช้ความสั้นหรือเกณฑ์ Vector ข้ามแล้วบอกว่าตรวจแล้ว
     # คำทักทายที่ตรงรายการเท่านั้นจึงตอบโดยไม่เรียกบริการภายนอก
@@ -48,10 +50,9 @@ def analyze_message(text: str, *, private: bool = False) -> dict:
             return {"status": "uncertain", "is_scam": False,
                     "reason": "กรุณาส่งข้อความที่ต้องการตรวจให้ครบถ้วน"}
 
-    # 3.1 ข้ามคำทั่วไป/ข้อความไม่เกิน 25 ตัวอักษรตามกฎเดิม
-    # ข้อจำกัด: ความสั้นไม่ได้รับประกันความปลอดภัย
-    if not private and (clean_text in SAFE_WORDS or len(clean_text) <= 25):
-        print(f"👉 [STAGE 1: BYPASS] ข้อความสั้น/คำทั่วไป (<= 25 ตัวอักษร)")
+    # ข้อความสั้นที่มีคำเสี่ยงต้องอ่านบริบท ไม่เตือนหรือข้ามจากคำเดียว
+    if not private and (clean_text in SAFE_WORDS or (len(clean_text) <= 25 and not has_trigger)):
+        print("👉 [STAGE 1: BYPASS] คำทั่วไปหรือข้อความสั้นที่ไม่มีคำบ่งชี้")
         return {"is_scam": False}
 
     try:
@@ -61,10 +62,9 @@ def analyze_message(text: str, *, private: bool = False) -> dict:
         print(f"[CHECK ERROR] stage={error.stage} type={error.error_type}")
         return {"status": "error", "is_scam": None, "error_stage": error.stage}
 
-    has_trigger = any(kw in text for kw in SCAM_TRIGGERS)
-
-    if private:
-        print("🤖 [STAGE 3: LLM] คำขอตรวจส่วนตัว -> วิเคราะห์บริบท ไม่ข้ามตามคะแนน")
+    if private or short_risk_message:
+        # ใช้ผลแบบมี status และ error โดยไม่เตือนตรงจากคะแนนหรือ fallback
+        print("🤖 [STAGE 3: LLM] ส่วนตัวหรือข้อความสั้นมีคำเสี่ยง -> วิเคราะห์บริบท")
         return analyze_with_llm(text, similarity_percent, matched_label, private=True)
 
     # 3.2 เตือนจาก Vector เฉพาะเมื่อแมตช์ spam; คะแนน ham ไม่ใช่หลักฐาน Scam
@@ -143,7 +143,7 @@ def find_similarity(text: str) -> tuple[float, str | None]:
     except Exception as error:
         raise DetectionUnavailable("vector_db", type(error).__name__) from None
 
-    print(f"📊 [STAGE 2: VECTOR DB] ความคล้ายคลึง: {similarity_percent}% | label={matched_label} | แมตช์กับ: '{matched_text}'")
+    print(f"📊 [STAGE 2: VECTOR DB] ความคล้ายคลึง: {similarity_percent}% | label={matched_label}")
 
     return similarity_percent, matched_label
 
@@ -247,7 +247,8 @@ def analyze_with_llm(text: str, similarity_percent: float, matched_label: str | 
                     raise ValueError("Invalid private status")
                 if parsed["is_scam"] != (status == "risk_found"):
                     raise ValueError("Contradictory private result")
-            print(f"📝 [LLM RESULT ({model_name})] is_scam={parsed.get('is_scam')} | reason={parsed.get('reason')}")
+            # เหตุผลอาจคัดลอกข้อมูลส่วนตัว จึงไม่พิมพ์ reason ลง log
+            print(f"📝 [LLM RESULT ({model_name})] is_scam={parsed.get('is_scam')}")
             return parsed
         except (TimeoutException, TimeoutError) as error:
             # หมดเวลา = ตรวจไม่ได้ ไม่ใช้คะแนนสำรองมาตัดสินแทน

@@ -1,34 +1,17 @@
 # หน้าที่: เตรียมฐานตัวอย่างจาก CSV โดยสร้าง embedding และเขียนลง Supabase
-# การรันหรือ import ไฟล์นี้มีผลเขียนฐานข้อมูลจริง ไม่ใช่ส่วนรับ webhook
+# เรียก main() หรือรันไฟล์จึงเขียนฐานข้อมูล; import อย่างเดียวไม่เริ่มงาน
 
 # 1. นำเข้าเครื่องมือ
 import pandas as pd
 from google import genai
 from google.genai import types
-from supabase import create_client, Client
+from supabase import create_client
 import time
 import os
-import sys
 import argparse
 import math
 from pathlib import Path
 from dotenv import load_dotenv
-
-# 2. รับค่าการเชื่อมต่อจาก environment และสร้าง client
-parser = argparse.ArgumentParser(description='Upload new CSV texts to Supabase')
-parser.add_argument('--limit', type=int, help='Maximum new rows to upload this run')
-args = parser.parse_args()
-if args.limit is not None and args.limit <= 0:
-    parser.error('--limit must be positive')
-load_dotenv(Path(__file__).with_name('.env'))
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_HISTORY_KEY") or os.getenv("SUPABASE_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-client = genai.Client(api_key=GEMINI_API_KEY, http_options=types.HttpOptions(
-    timeout=30_000, retry_options=types.HttpRetryOptions(attempts=1)))
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 # อ่านทุกหน้า ไม่ใช้จำนวนแถวเดิมเป็นตำแหน่งใน CSV
 def select_new_rows(df, db):
@@ -65,27 +48,8 @@ def select_new_rows(df, db):
             raise ValueError('Existing text has conflicting label; review before upload')
     return df.loc[~df['thai_text'].isin(existing)].drop_duplicates('thai_text')
 
-# 3. ตรวจข้อมูลเดิมก่อนสร้าง embedding; อ่านไม่สำเร็จต้องหยุด
-try:
-    df = pd.read_csv(Path(__file__).with_name('linebot_1000word.csv'), encoding='utf-8-sig')
-    df_remaining = select_new_rows(df, supabase)
-except Exception as e:
-    print(f"หยุด: ตรวจ CSV/ข้อมูลเดิมไม่สำเร็จ type={type(e).__name__}")
-    sys.exit(1)
-
-total_rows = len(df)
-
-if df_remaining.empty:
-    print("ไม่มีข้อความใหม่ที่ต้องอัปโหลด")
-    sys.exit(0)
-
-print(f"CSV {total_rows} แถว / ข้อความใหม่ {len(df_remaining)} แถว")
-if args.limit is not None:
-    df_remaining = df_remaining.head(args.limit)
-print(f"รอบนี้อัปโหลดไม่เกิน {len(df_remaining)} แถว", flush=True)
-
-# 6. ฟังก์ชันแปลงข้อความ: รับ text → คืนรายการตัวเลขเวกเตอร์ 768 มิติ
-def get_embedding(text):
+# รับ client อย่างชัดเจน ไม่พึ่ง client ที่สร้างเมื่อ import
+def get_embedding(text, client):
     response = client.models.embed_content(
         model="gemini-embedding-001",
         contents=text,
@@ -99,34 +63,59 @@ def get_embedding(text):
         raise ValueError('Invalid embedding')
     return values
 
-# 7. ประกาศขนาด batch และพื้นที่พักข้อมูลก่อน insert
-batch_size = 50
-records = []
-
-# 8. ประมวลผลทีละแถว: embedding → สะสม → insert เมื่อครบ batch
-# Run only one uploader at a time. Stop on ambiguous writes; inspect before rerunning.
-uploaded = 0
-for i, row in df_remaining.iterrows():
-    text = str(row['thai_text'])
-    label = str(row['label'])
-
+def main(argv=None):
+    """อ่าน CSV → เลือกแถวใหม่ → embedding → insert; คืน exit code."""
+    parser = argparse.ArgumentParser(description='Upload new CSV texts to Supabase')
+    parser.add_argument('--limit', type=int, help='Maximum new rows to upload this run')
+    args = parser.parse_args(argv)
+    if args.limit is not None and args.limit <= 0:
+        parser.error('--limit must be positive')
+    load_dotenv(Path(__file__).with_name('.env'))
     try:
-        embedding = get_embedding(text)
-        records.append({'label': label, 'thai_text': text, 'embedding': embedding})
-        time.sleep(4)
-    except Exception as e:
-        print(f"หยุด: embedding แถว CSV {i+1} type={type(e).__name__}; ยังไม่บันทึกชุดค้าง {len(records)} แถว")
-        sys.exit(1)
+        client = genai.Client(api_key=os.getenv('GEMINI_API_KEY'), http_options=types.HttpOptions(
+            timeout=30_000, retry_options=types.HttpRetryOptions(attempts=1)))
+        key = os.getenv('SUPABASE_HISTORY_KEY') or os.getenv('SUPABASE_KEY')
+        db = create_client(os.getenv('SUPABASE_URL'), key)
+        df = pd.read_csv(Path(__file__).with_name('linebot_1000word.csv'), encoding='utf-8-sig')
+        df_remaining = select_new_rows(df, db)
+    except Exception as error:
+        print(f"หยุด: ตรวจ CSV/ข้อมูลเดิมไม่สำเร็จ type={type(error).__name__}")
+        return 1
 
-    # 4. เมื่อสะสมครบ 50 แถว หรือถึงแถวสุดท้าย ให้อัปโหลดขึ้น Supabase ตามปกติ
-    if len(records) >= batch_size or i == df_remaining.index[-1]:
+    if df_remaining.empty:
+        print('ไม่มีข้อความใหม่ที่ต้องอัปโหลด')
+        return 0
+    print(f'CSV {len(df)} แถว / ข้อความใหม่ {len(df_remaining)} แถว')
+    if args.limit is not None:
+        df_remaining = df_remaining.head(args.limit)
+    print(f'รอบนี้อัปโหลดไม่เกิน {len(df_remaining)} แถว', flush=True)
+
+    # รันครั้งละหนึ่ง process; ถ้าเขียนไม่สำเร็จต้องตรวจฐานก่อนรันซ้ำ
+    batch_size = 50
+    records = []
+    uploaded = 0
+    for index, row in df_remaining.iterrows():
         try:
-            supabase.table('scam_dataset').insert(records).execute()
-            uploaded += len(records)
-            print(f"อัปโหลดรอบนี้ {uploaded}/{len(df_remaining)} แถว", flush=True)
-            records = []
-        except Exception as e:
-            print(f"หยุด: insert type={type(e).__name__}; ต้องตรวจฐานก่อนรันซ้ำ ไม่ retry อัตโนมัติ")
-            sys.exit(1)
+            text = str(row['thai_text'])
+            embedding = get_embedding(text, client)
+            records.append({'label': str(row['label']), 'thai_text': text, 'embedding': embedding})
+            time.sleep(4)
+        except Exception as error:
+            print(f'หยุด: embedding แถว CSV {index+1} type={type(error).__name__}; ยังไม่บันทึกชุดค้าง {len(records)} แถว')
+            return 1
 
-print(f"เสร็จเฉพาะรอบนี้: {uploaded} แถว")
+        if len(records) >= batch_size or index == df_remaining.index[-1]:
+            try:
+                db.table('scam_dataset').insert(records).execute()
+                uploaded += len(records)
+                print(f'อัปโหลดรอบนี้ {uploaded}/{len(df_remaining)} แถว', flush=True)
+                records = []
+            except Exception as error:
+                print(f'หยุด: insert type={type(error).__name__}; ต้องตรวจฐานก่อนรันซ้ำ ไม่ retry อัตโนมัติ')
+                return 1
+    print(f'เสร็จเฉพาะรอบนี้: {uploaded} แถว')
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
