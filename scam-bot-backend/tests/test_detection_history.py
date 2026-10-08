@@ -18,6 +18,7 @@ def load_history():
     supabase_client.ClientOptions = lambda **kwargs: kwargs
     messaging = ModuleType("messaging")
     messaging.get_group_name = Mock(return_value=None)
+    messaging.get_group_member_count = Mock(return_value=None)
     path = Path(__file__).resolve().parents[1] / "detection_history.py"
     spec = importlib.util.spec_from_file_location("history_under_test", path)
     module = importlib.util.module_from_spec(spec)

@@ -6,6 +6,27 @@ from bot_observability import log as print, timed_call
 from config import LINE_CHANNEL_ACCESS_TOKEN
 
 
+def get_group_member_count(group_id: str) -> int | None:
+    """ดึงจำนวนสมาชิกที่ไม่รวมบอต; ถ้าดึงไม่ได้คืน None เพื่อรักษาค่าเดิม."""
+    try:
+        response = requests.get(
+            f"https://api.line.me/v2/bot/group/{quote(group_id, safe='')}/members/count",
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not isinstance(data, dict):
+            raise ValueError("Invalid member count response")
+        count = data.get("count")
+        if type(count) is not int or count < 0:
+            raise ValueError("Invalid member count")
+        return count
+    except (requests.RequestException, ValueError) as error:
+        print(f"[GROUP ERROR] stage=line_member_count type={type(error).__name__}")
+        return None
+
+
 def get_group_name(group_id: str) -> str | None:
     """อ่านชื่อกลุ่มจาก LINE; ล้มเหลวคืน None ไม่พิมพ์ token/ชื่อกลุ่มใน log."""
     try:

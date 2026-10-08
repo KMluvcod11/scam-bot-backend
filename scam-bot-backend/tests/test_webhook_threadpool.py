@@ -32,6 +32,7 @@ def load_app():
     history.save_detection = Mock(return_value=True)
     history.save_group_join = Mock(return_value=True)
     history.save_group_leave = Mock(return_value=True)
+    history.save_group_members = Mock(return_value=True)
     path = Path(__file__).resolve().parents[1] / "main.py"
     spec = importlib.util.spec_from_file_location("webhook_under_test", path)
     module = importlib.util.module_from_spec(spec)

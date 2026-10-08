@@ -6,7 +6,7 @@ from supabase.client import ClientOptions
 
 from bot_observability import error_summary, log
 from config import SAFE_WORDS, SUPABASE_HISTORY_KEY, SUPABASE_URL
-from messaging import get_group_name
+from messaging import get_group_name, get_group_member_count
 
 
 _client = None
@@ -58,11 +58,33 @@ def save_group_join(event):
         name = get_group_name(group_id)
         if name is not None:
             db.table("line_sources").update({"display_name": name}).eq("line_source_id", group_id).execute()
+        save_group_members(event)
         # หากดึงชื่อไม่ได้ ไม่ส่ง null ไปทับชื่อเดิม
         log(f"[GROUP JOIN] saved=true name_loaded={str(name is not None).lower()}")
         return True
     except Exception as error:
         log(f"[GROUP ERROR] stage=join type={type(error).__name__}")
+        return False
+
+
+def save_group_members(event):
+    """บันทึกจำนวนล่าสุดจาก LINE โดยไม่บวก/ลบซ้ำจาก webhook ที่ส่งซ้ำ."""
+    try:
+        kind, group_id = _source(event)
+        if kind != "group" or not group_id:
+            return False
+        count = get_group_member_count(group_id)
+        if count is None:
+            return False
+        _history_client().table("line_sources").upsert({
+            "line_source_id": group_id,
+            "source_type": "group",
+            "member_count": count,
+            "last_seen_at": datetime.now(timezone.utc).isoformat(),
+        }, on_conflict="line_source_id").execute()
+        return True
+    except Exception as error:
+        log(f"[GROUP ERROR] stage=members type={type(error).__name__}")
         return False
 
 
