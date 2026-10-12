@@ -15,7 +15,6 @@ def load_detector():
         "GEMINI_KEY": "test", "SUPABASE_URL": "test", "SUPABASE_KEY": "test",
         "SAFE_WORDS": set(), "SCAM_TRIGGERS": [],
         "VECTOR_MATCH_THRESHOLD": 0.65, "DIRECT_SCAM_THRESHOLD": 92.0,
-        "LLM_WITHOUT_TRIGGER_THRESHOLD": 85.0,
     }.items():
         setattr(config, name, value)
     google = ModuleType("google")

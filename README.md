@@ -22,7 +22,7 @@ LINE message -> FastAPI webhook -> signature / payload / duplicate checks
              -> detection history for the dashboard
 ```
 
-Group chats skip configured greetings and short messages without configured risk keywords. Short messages with risk keywords (including OTP/password/transfer terms) use contextual LLM analysis after retrieval, even at low scores; keywords alone never force a warning on this path. Longer group messages retain score-based routing, including direct warnings for strong spam matches. Private requests use contextual analysis after retrieval, with separate handling for greetings and empty input. Contextual analysis here means the submitted message, not conversation memory or website inspection.
+Group chats skip configured greetings and short messages without configured risk keywords. Short messages with risk keywords (including OTP/password/transfer terms) use contextual LLM analysis after retrieval, even at low scores; keywords alone never force a warning on this path. Longer group messages warn directly for spam matches at 92% similarity or higher; all other successfully retrieved results go to contextual LLM analysis, including low scores and empty matches. Low similarity is not treated as evidence that a message is safe. Private requests use contextual analysis after retrieval, with separate handling for greetings and empty input. Contextual analysis here means the submitted message, not conversation memory or website inspection. This broader routing increases LLM calls and may increase response times.
 
 Similarity thresholds are routing rules, not measured accuracy or probabilities of fraud. A non-warning result does not guarantee safety.
 

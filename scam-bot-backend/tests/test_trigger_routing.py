@@ -57,18 +57,36 @@ class TriggerRoutingTests(unittest.TestCase):
                 llm.assert_called_once()
                 self.assertIs(result["is_scam"], False)
 
-    def test_65_percent_boundary_unchanged(self):
-        for score, calls in ((64.99, 0), (65, 1)):
+    def test_long_message_with_keyword_reaches_llm_at_low_scores(self):
+        text = "ข้อความเกี่ยวกับการลงทุนสำหรับทดสอบการส่งต่อให้วิเคราะห์บริบท"
+        for score, label in ((0, None), (64.99, "spam"), (65, "spam")):
             with self.subTest(score=score):
-                _, llm = self.route("ข้อความเกี่ยวกับการลงทุนสำหรับทดสอบการส่งต่อให้วิเคราะห์บริบท", score)
-                self.assertEqual(llm.call_count, calls)
+                _, llm = self.route(text, score, label)
+                llm.assert_called_once_with(text, score, label)
 
-    def test_no_keyword_and_short_text_rules_unchanged(self):
-        for text in ("พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม", "กินข้าวยัง"):
+    def test_long_message_without_keyword_uses_llm_decision(self):
+        text = "พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม"
+        for score, label in ((0, None), (82.54, "ham"), (84.99, "ham"), (85, "ham")):
+            with self.subTest(score=score):
+                result, llm = self.route(text, score, label)
+                llm.assert_called_once_with(text, score, label)
+                self.assertIs(result["is_scam"], False)
+
+    def test_short_text_without_keyword_still_skips_llm(self):
+        for text in ("กินข้าวยัง", "สวัสดีครับ"):
             with self.subTest(text=text):
-                result, llm = self.route(text, 84)
+                result, llm = self.route(text, 99)
                 llm.assert_not_called()
                 self.assertIs(result["is_scam"], False)
+
+    def test_job_payment_message_reaches_llm_at_observed_score(self):
+        text = "ฝ่ายประสานงานแจ้งว่าคุณผ่านคัดเลือกงานตรวจรายการสินค้าแล้ว ก่อนเปิดบัญชีรับงานต้องชำระค่ารับรองตัวตน 387 บาทเข้าบัญชีบุคคลภายใน 12 นาที โดยจะคืนให้พร้อมค่าจ้างรอบแรก"
+        self.assertFalse(any(keyword in text for keyword in self.detector.SCAM_TRIGGERS))
+        for decision in (True, False):
+            with self.subTest(decision=decision):
+                result, llm = self.route(text, 82.54, "ham", decision=decision)
+                llm.assert_called_once_with(text, 82.54, "ham")
+                self.assertIs(result["is_scam"], decision)
 
     def test_short_risky_words_use_context_even_at_extreme_scores(self):
         for text in ('ส่ง OTP มา', 'ส่ง otp มา', 'ขอรหัสผ่าน', 'โอนเงินทันที', 'อย่าส่ง OTP ให้ใคร'):

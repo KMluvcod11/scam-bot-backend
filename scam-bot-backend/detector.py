@@ -11,7 +11,7 @@ from httpx import TimeoutException
 from bot_observability import log as print, timed_call
 from config import (
     GEMINI_KEY, SUPABASE_URL, SUPABASE_KEY, SAFE_WORDS, SCAM_TRIGGERS,
-    VECTOR_MATCH_THRESHOLD, DIRECT_SCAM_THRESHOLD, LLM_WITHOUT_TRIGGER_THRESHOLD,
+    VECTOR_MATCH_THRESHOLD, DIRECT_SCAM_THRESHOLD,
 )
 
 # 2. สร้าง client สำหรับเรียก Gemini และ Supabase
@@ -76,18 +76,8 @@ def analyze_message(text: str, *, private: bool = False) -> dict:
             "reason": "ตรงกับรูปแบบข้อความมิจฉาชีพในฐานข้อมูลอย่างมีนัยสำคัญ"
         }
 
-    # 3.3 ไม่มี keyword และคะแนนต่ำกว่า 85%: ไม่เรียก LLM
-    if not has_trigger and similarity_percent < LLM_WITHOUT_TRIGGER_THRESHOLD:
-        print(f"🎯 [STAGE 2: PASS] ไม่พบคีย์เวิร์ดและ Similarity ต่ำกว่า {LLM_WITHOUT_TRIGGER_THRESHOLD}% ({similarity_percent}%) -> ไม่เรียก LLM")
-        return {"is_scam": False}
-
-    # 3.4 คะแนนต่ำกว่า 65%: ไม่แจ้งเตือนตามกฎเดิม
-    if similarity_percent < 65.0:
-        print(f"🎯 [STAGE 2: PASS] มีคีย์เวิร์ดแต่ Similarity ต่ำ (< 65%) -> ไม่เข้าเกณฑ์เรียก LLM")
-        return {"is_scam": False}
-
-    # 3.5 ส่งให้ LLM เมื่อมีคำบ่งชี้และคะแนน >=65 หรือไม่มีคำบ่งชี้แต่คะแนน >=85
-    print(f"🤖 [STAGE 3: LLM] เข้าข่ายเสี่ยง -> ส่งต่อให้ Gemini วิเคราะห์บริบท")
+    # 3.3 ความคล้ายต่ำอาจเป็นข้อความรูปแบบใหม่ จึงให้ LLM อ่านบริบทต่อ
+    print("🤖 [STAGE 3: LLM] Vector ไม่เข้าเกณฑ์เตือนตรง -> วิเคราะห์บริบท")
 
     return analyze_with_llm(text, similarity_percent, matched_label)
 

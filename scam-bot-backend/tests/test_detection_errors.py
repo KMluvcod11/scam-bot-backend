@@ -1,4 +1,5 @@
 """จำลองบริการล่มและข้อมูลเสีย โดยไม่อ่านคีย์หรือเรียก API จริง."""
+import json
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -43,9 +44,13 @@ class DetectionErrorTests(unittest.TestCase):
 
     def test_empty_search_is_not_a_service_failure(self):
         self.detector.supabase.rpc.return_value.execute.return_value = SimpleNamespace(data=[])
+        self.detector.client.models.generate_content.return_value = SimpleNamespace(
+            text=json.dumps({"is_scam": False, "risk_level": "low", "reason": "ข้อความทั่วไป"})
+        )
         result, _ = self.analyze()
         self.assertIs(result["is_scam"], False)
         self.assertNotEqual(result.get("status"), "error")
+        self.detector.client.models.generate_content.assert_called_once()
 
     def test_invalid_search_results_are_not_safe_results(self):
         for data in (None, {}, [{}], [{"similarity": float("nan"), "thai_text": "test"}],

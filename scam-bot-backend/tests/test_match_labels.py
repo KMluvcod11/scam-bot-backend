@@ -50,10 +50,18 @@ class MatchLabelTests(unittest.TestCase):
         self.assertIs(self.analyze()["is_scam"], False)
         self.detector.client.models.generate_content.assert_called_once()
 
-    def test_no_keyword_below_85_keeps_existing_gate(self):
+    def test_no_keyword_below_85_uses_llm_decision(self):
         self.match(0.84, "ham")
+        self.answer(False)
         self.assertIs(self.analyze()["is_scam"], False)
-        self.detector.client.models.generate_content.assert_not_called()
+        self.detector.client.models.generate_content.assert_called_once()
+
+    def test_low_similarity_llm_timeout_is_error(self):
+        self.match(0.8254, "ham")
+        self.detector.client.models.generate_content.side_effect = TimeoutError("offline")
+        result = self.analyze()
+        self.assertEqual(result, {"status": "error", "is_scam": None, "error_stage": "llm"})
+        self.detector.client.models.generate_content.assert_called_once()
 
     def test_ham_high_score_never_warns_from_fallback(self):
         self.match(1.0, "ham")
