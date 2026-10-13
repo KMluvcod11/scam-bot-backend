@@ -209,6 +209,31 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         response = await self.post_events([text_event()])
         self.assertEqual(response.status_code, 200)
         self.module.reply_to_line.assert_called_once()
+        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_args.kwargs,
+                         {"warning_attempted": True, "warning_sent": False})
+
+    async def test_group_history_failure_preserves_reply_and_next_event(self):
+        self.module.analyze_message.return_value = {
+            "is_scam": True, "risk_level": "high", "reason": "test",
+        }
+        self.module.save_detection.side_effect = [False, True]
+        events = [text_event("first", 1), text_event("second", 2)]
+        with patch("builtins.print") as output:
+            response = await self.post_events(events)
+            # event เดิมที่บันทึกไม่สำเร็จยังถูกข้ามตามนโยบายไม่ retry อัตโนมัติ
+            events[0]["deliveryContext"]["isRedelivery"] = True
+            repeated = await self.post_events([events[0]])
+        self.assertEqual((response.status_code, repeated.status_code), (200, 200))
+        self.assertEqual(self.module.analyze_message.call_count, 2)
+        self.assertEqual(self.module.reply_to_line.call_count, 2)
+        self.assertEqual(self.module.save_detection.call_count, 2)
+        for call in self.module.save_detection.call_args_list:
+            self.assertEqual(call.kwargs, {"warning_attempted": True, "warning_sent": True})
+        logs = str(output.call_args_list)
+        self.assertIn("returned=false", logs)
+        self.assertIn("returned=true", logs)
+        self.assertIn("claim=duplicate", logs)
 
     async def test_detection_error_stays_silent_and_next_event_is_processed(self):
         self.module.analyze_message.side_effect = [
@@ -219,6 +244,11 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.module.reply_to_line.assert_called_once()
         self.assertEqual(self.module.reply_to_line.call_args.args[0], "reply-2")
+        self.assertEqual(self.module.save_detection.call_count, 2)
+        failed_result = self.module.save_detection.call_args_list[0].args[1]
+        self.assertEqual(failed_result["status"], "error")
+        self.assertIsNone(failed_result["is_scam"])
+        self.assertEqual(failed_result["error_stage"], "embedding")
 
     async def test_unexpected_analysis_error_does_not_stop_next_event(self):
         self.module.analyze_message.side_effect = [
@@ -260,6 +290,11 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             response = await self.post_events([text_event("first", 1), text_event("second", 2)])
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.module.reply_to_line.call_count, 2)
+        self.assertEqual(self.module.save_detection.call_count, 2)
+        self.assertEqual(self.module.save_detection.call_args_list[0].kwargs,
+                         {"warning_attempted": True, "warning_sent": False})
+        self.assertEqual(self.module.save_detection.call_args_list[1].kwargs,
+                         {"warning_attempted": True, "warning_sent": True})
         log = " ".join(str(call) for call in output.call_args_list)
         self.assertIn("stage=line_reply", log)
         self.assertNotIn("SECRET_TEST", log)

@@ -132,6 +132,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.post_events([event])).status_code, 200)
         self.module.analyze_message.assert_called_once()
         self.module.reply_to_line.assert_called_once()
+        self.module.save_detection.assert_called_once()
 
     async def test_first_seen_redelivery_and_same_text_new_id_are_processed(self):
         first = fixtures.text_event(number=1)
