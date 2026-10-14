@@ -12,7 +12,16 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhook import WebhookParser
-from linebot.v3.webhooks import JoinEvent, LeaveEvent, MemberJoinedEvent, MemberLeftEvent, MessageEvent, PostbackEvent, TextMessageContent
+from linebot.v3.webhooks import (
+    JoinEvent,
+    LeaveEvent,
+    MemberJoinedEvent,
+    MemberLeftEvent,
+    MessageEvent,
+    PostbackEvent,
+    TextMessageContent,
+    ImageMessageContent,
+)
 from config import LINE_CHANNEL_SECRET
 from detector import analyze_message
 from messaging import reply_to_line
@@ -76,10 +85,17 @@ def parse_webhook(body: bytes, signature: str | None):
                 source = raw.get("source")
                 if not isinstance(source, dict) or source.get("type") not in {"user", "group", "room"}:
                     raise ValueError("Invalid message source")
+                
                 if message["type"] == "text":
                     if not isinstance(message.get("text"), str):
                         raise ValueError("Invalid text")
-                if message["type"] == "text" or source["type"] == "user":
+
+                if message ["type"] == "image":
+                    messag_id = message.get("id")
+                    if not isinstance(messag_id, str) or not messag_id.strip():
+                        raise ValueError("Missing image message ID")
+                    
+                if message["type"] in {"text", "image"} or source["type"] == "user":
                     for field in ("webhookEventId", "replyToken"):
                         if not isinstance(raw.get(field), str) or not raw[field].strip():
                             raise ValueError("Missing event identity or reply token")
@@ -102,6 +118,9 @@ def parse_webhook(body: bytes, signature: str | None):
             if raw["type"] == "message" and raw["message"]["type"] == "text":
                 if not isinstance(event, MessageEvent) or not isinstance(event.message, TextMessageContent):
                     raise ValueError("Invalid text event")
+            if raw["type"] == "message" and raw["message"]["type"] == "image":
+                if not isinstance(event, MessageEvent) or not isinstance(event.message, ImageMessageContent):
+                    raise ValueError("Invalid image event")
         return events
     except InvalidSignatureError:
         raise HTTPException(status_code=400, detail="Invalid signature") from None
