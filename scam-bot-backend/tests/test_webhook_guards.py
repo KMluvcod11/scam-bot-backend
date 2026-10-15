@@ -190,6 +190,49 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ไม่เข้าเกณฑ์แจ้งเตือน", log)
         self.assertNotIn("ปลอดภัย", log)
 
+    async def test_group_image_is_routed_without_analysis(self):
+        event = fixtures.text_event()
+        event["message"] = {
+            "type": "image",
+            "id" : "1",
+            "contentProvider": {"type": "line"},
+            "quoteToken": "offline",
+        }
+        with patch.object(
+            self.module,
+            "process_text_event",
+            wraps=self.module.process_text_event,
+        ) as process_text:
+            response = await self.post_events([event,event])
+            
+        self.assertEqual(response.status_code, 200)
+        process_text.assert_awaited_once()
+
+        self.module.analyze_message.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_group_image_rejects_invalid_identity_before_work(self):
+        for field in ("id","webhookEventId", "replyToken"):
+            for value in (None, ""," ", 123):
+                with self.subTest(field=field, value=value):
+                    event = fixtures.text_event()
+                    event["message"] = {
+                        "type": "image",
+                        "id" : "1",
+                        "contentProvider": {"type": "line"},
+                        "quoteToken": "offline",
+                    }
+                    target = event["message"] if field == "id" else event
+                    if value is None:
+                        target.pop(field)
+                    else:
+                        target[field] = value
+                    response = await self.post_events([event])
+                    self.assertEqual(response.status_code, 400)
+        self.module.analyze_message.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
 
 if __name__ == "__main__":
     unittest.main()

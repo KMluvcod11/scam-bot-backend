@@ -187,9 +187,14 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             ["first", "second"],
         )
 
-    async def test_non_text_and_empty_events_are_skipped(self):
+    async def test_group_image_and_empty_events_do_not_analyze(self):
         event = text_event()
-        event["message"] = {"type": "image", "id": "1", "contentProvider": {"type": "line"}}
+        event["message"] = {
+            "type": "image",
+            "id": "1", 
+            "contentProvider": {"type": "line"},
+            "quoteToken": "offline",
+            }
         for events in ([], [event]):
             response = await self.post_events(events)
             self.assertEqual(response.status_code, 200)

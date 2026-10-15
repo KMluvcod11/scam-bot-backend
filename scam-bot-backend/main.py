@@ -148,11 +148,12 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
         print(f"[WEBHOOK] request={request_id} rejected={error.status_code} elapsed={monotonic() - received:.2f}s")
         raise
 
-    # 5. กลุ่มตรวจเฉพาะ Text; ส่วนตัวตอบด้วยเมื่อสื่อที่ส่งมายังไม่รองรับ
+    # 5. รับ Text และรูปภาพ; สื่ออื่นตอบเฉพาะแชตส่วนตัว 
     for event in events:
         is_private_postback = isinstance(event, PostbackEvent) and event.source.type == "user"
         is_supported_message = isinstance(event, MessageEvent) and (
-            isinstance(event.message, TextMessageContent) or event.source.type == "user"
+            isinstance(event.message, (TextMessageContent, ImageMessageContent)) 
+            or event.source.type == "user"
         )
         is_group_join = isinstance(event, JoinEvent) and event.source.type == "group"
         is_group_leave = isinstance(event, LeaveEvent) and event.source.type == "group"
@@ -206,6 +207,14 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
         if event.source.type == "user":
             await process_learning_event(event)
         return
+
+    if isinstance(event.message, ImageMessageContent):
+        print("==================== [NEW IMAGE MESSAGE] ====================")
+        print(f"[MESSAGE] source={event.source.type} image_id")
+        if event.source.type == "user":
+            await process_private_event(event)
+        return
+
     # ไม่ส่งคำอธิบายส่วนตัวเข้า group/room; กลุ่มยังใช้ทางเดิมด้านล่าง
     if getattr(getattr(event, "source", None), "type", None) == "user":
         await process_private_event(event)
