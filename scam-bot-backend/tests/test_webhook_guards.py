@@ -234,5 +234,59 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.module.save_detection.assert_not_called()
 
+    async def test_image_download_runs_once_in_worker_thread(self):
+        request_thread = threading.get_ident()
+        download_threads = []
+
+        def download(message_id):
+            download_threads.append(threading.get_ident())
+            return b"offline-image", "image/jpeg"
+
+        self.module.get_image_content.side_effect = download
+        event = fixtures.image_event()
+
+        response = await self.post_events([event, event])
+
+        self.assertEqual(response.status_code, 200)
+        self.module.get_image_content.assert_called_once_with("1")
+        self.assertEqual(len(download_threads), 1)
+        self.assertNotEqual(download_threads[0], request_thread)
+        self.module.analyze_message.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_failed_image_download_keeps_next_text_working(self):
+        self.module.get_image_content.return_value = None
+
+        response = await self.post_events([
+            fixtures.image_event(),
+            fixtures.text_event("ข้อความถัดไป", number=2),
+        ])
+
+        self.assertEqual(response.status_code, 200)
+        self.module.get_image_content.assert_called_once_with("1")
+        self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_called_once()
+
+    async def test_image_download_exception_keeps_next_text_working(self):
+        self.module.get_image_content.side_effect = RuntimeError(
+            "SECRET_IMAGE"
+        )
+
+        with patch("builtins.print") as logs:
+            response = await self.post_events([
+                fixtures.image_event(),
+                fixtures.text_event("ข้อความถัดไป", number=2),
+            ])
+
+        self.assertEqual(response.status_code, 200)
+        self.module.get_image_content.assert_called_once_with("1")
+        self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_called_once()
+        self.assertNotIn("SECRET_IMAGE", str(logs.call_args_list))
+
+
 if __name__ == "__main__":
     unittest.main()

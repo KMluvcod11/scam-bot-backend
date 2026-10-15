@@ -24,7 +24,7 @@ from linebot.v3.webhooks import (
 )
 from config import LINE_CHANNEL_SECRET
 from detector import analyze_message
-from messaging import reply_to_line
+from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
 from detection_history import save_detection, save_group_join, save_group_leave, save_group_members
@@ -209,11 +209,33 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
         return
 
     if isinstance(event.message, ImageMessageContent):
-        print("==================== [NEW IMAGE MESSAGE] ====================")
-        print(f"[MESSAGE] source={event.source.type} image_id")
+        print(f"[MESSAGE] source={event.source.type} type=image")
+
+        try:
+            image_content = await run_in_threadpool(
+                timed_call,
+                "line_image",
+                get_image_content,
+                event.message.id,
+            )
+        except Exception as error:
+            print(
+                f"[IMAGE ERROR] stage=download "
+                f"type={type(error).__name__}"
+            )
+            image_content = None
+
+        if image_content is None:
+            print("[ACTION] ดาวน์โหลดรูปไม่สำเร็จ ยังไม่ได้วิเคราะห์")
+        else:
+            image_bytes, mime_type = image_content
+            print(f"[IMAGE] bytes={len(image_bytes)} mime={mime_type}")
+            print("[ACTION] ดาวน์โหลดรูปแล้ว ยังไม่ได้วิเคราะห์")
+
         if event.source.type == "user":
             await process_private_event(event)
-        return
+
+        return  
 
     # ไม่ส่งคำอธิบายส่วนตัวเข้า group/room; กลุ่มยังใช้ทางเดิมด้านล่าง
     if getattr(getattr(event, "source", None), "type", None) == "user":

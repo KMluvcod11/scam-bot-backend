@@ -28,6 +28,7 @@ def load_app():
     detector.analyze_message = Mock(return_value={"is_scam": False})
     messaging = ModuleType("messaging")
     messaging.reply_to_line = Mock(return_value=True)
+    messaging.get_image_content = Mock(return_value=(b"offline-image", "image/jpeg"))
     history = ModuleType("detection_history")
     history.save_detection = Mock(return_value=True)
     history.save_group_join = Mock(return_value=True)
@@ -55,6 +56,17 @@ def text_event(text="ข้อความทดสอบ", number=1):
         "message": {"type": "text", "id": str(number), "text": text,
                     "quoteToken": "offline-quote"},
     }
+
+
+def image_event(number=1):
+    event = text_event(number=number)
+    event["message"] = {
+        "type": "image",
+        "id": str(number),
+        "contentProvider": {"type": "line"},
+        "quoteToken": "offline",
+    }
+    return event
 
 
 class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):

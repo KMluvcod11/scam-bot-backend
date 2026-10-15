@@ -1,0 +1,112 @@
+"""ทดสอบดาวน์โหลดรูปด้วยข้อมูลจำลอง ไม่อ่านคีย์หรือเรียก LINE จริง."""
+import importlib.util
+from pathlib import Path
+import sys
+from types import ModuleType
+import unittest
+from unittest.mock import patch
+
+import requests
+
+
+class ImageContentTests(unittest.TestCase):
+    def setUp(self):
+        config = ModuleType("config")
+        config.LINE_CHANNEL_ACCESS_TOKEN = "offline-token"
+
+        path = Path(__file__).resolve().parents[1] / "messaging.py"
+        spec = importlib.util.spec_from_file_location(
+            "image_messaging_test", path
+        )
+        self.messaging = importlib.util.module_from_spec(spec)
+
+        with patch.object(sys, "path", [str(path.parent), *sys.path]):
+            with patch.dict(sys.modules, {"config": config}):
+                spec.loader.exec_module(self.messaging)
+
+        self.get = self.enterContext(
+            patch.object(self.messaging.requests, "get")
+        )
+        self.logs = self.enterContext(
+            patch.object(self.messaging, "print")
+        )
+
+        self.response = self.get.return_value.__enter__.return_value
+        self.response.status_code = 200
+        self.response.headers = {
+            "Content-Type": "Image/JPEG; charset=binary"
+        }
+        self.response.iter_content.return_value = [b"one", b"two"]
+
+    def test_download_returns_bytes_and_mime_type(self):
+        result = self.messaging.get_image_content("1/2")
+
+        self.assertEqual(result, (b"onetwo", "image/jpeg"))
+        self.get.assert_called_once_with(
+            "https://api-data.line.me/v2/bot/message/1%2F2/content",
+            headers={"Authorization": "Bearer offline-token"},
+            timeout=(5, 10),
+            stream=True,
+            allow_redirects=False,
+        )
+
+    def test_invalid_id_does_not_request_line(self):
+        for message_id in (None, "", "   ", 123):
+            with self.subTest(message_id=message_id):
+                result = self.messaging.get_image_content(message_id)
+                self.assertIsNone(result)
+
+        self.get.assert_not_called()
+
+    def test_unsupported_mime_type_does_not_read_body(self):
+        for mime_type in ("text/html", "application/octet-stream", ""):
+            with self.subTest(mime_type=mime_type):
+                self.response.headers = {"Content-Type": mime_type}
+                result = self.messaging.get_image_content("1")
+                self.assertIsNone(result)
+
+        self.response.iter_content.assert_not_called()
+
+    def test_redirect_is_rejected(self):
+        self.response.status_code = 302
+
+        result = self.messaging.get_image_content("1")
+
+        self.assertIsNone(result)
+        self.response.iter_content.assert_not_called()
+
+    def test_empty_content_returns_none(self):
+        self.response.iter_content.return_value = [b""]
+
+        result = self.messaging.get_image_content("1")
+
+        self.assertIsNone(result)
+
+    def test_size_limit_accepts_exact_limit_and_rejects_overflow(self):
+        self.assertEqual(
+            self.messaging.MAX_IMAGE_BYTES, 5 * 1024 * 1024
+        )
+
+        with patch.object(self.messaging, "MAX_IMAGE_BYTES", 4):
+            self.response.iter_content.return_value = [b"12", b"34"]
+            result = self.messaging.get_image_content("1")
+            self.assertEqual(result, (b"1234", "image/jpeg"))
+
+            self.response.iter_content.return_value = [b"12", b"345"]
+            result = self.messaging.get_image_content("1")
+            self.assertIsNone(result)
+
+    def test_http_error_and_timeout_do_not_log_secrets(self):
+        self.response.raise_for_status.side_effect = (
+            requests.HTTPError("SECRET_HTTP")
+        )
+        self.assertIsNone(self.messaging.get_image_content("1"))
+
+        self.get.side_effect = requests.Timeout("SECRET_TIMEOUT")
+        self.assertIsNone(self.messaging.get_image_content("1"))
+
+        self.assertNotIn("SECRET", str(self.logs.call_args_list))
+
+
+if __name__ == "__main__":
+    unittest.main()
