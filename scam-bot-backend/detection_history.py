@@ -6,7 +6,7 @@ from supabase.client import ClientOptions
 
 from bot_observability import error_summary, log
 from config import SAFE_WORDS, SUPABASE_HISTORY_KEY, SUPABASE_URL
-from messaging import get_group_name, get_group_member_count
+from messaging import get_group_name, get_group_member_count, get_sender_display_name
 
 
 _client = None
@@ -88,6 +88,32 @@ def save_group_members(event):
         return False
 
 
+def sync_missing_group_members():
+    """เติมจำนวนสมาชิกของกลุ่มเดิมที่ยังเป็น null; ไม่แก้ประวัติข้อความ."""
+    db = _history_client()
+    rows = (db.table("line_sources")
+            .select("id,line_source_id")
+            .eq("source_type", "group")
+            .eq("is_active", True)
+            .is_("member_count", "null")
+            .execute().data or [])
+    updated = 0
+    for row in rows:
+        count = get_group_member_count(row["line_source_id"])
+        if count is None:
+            continue
+        try:
+            response = (db.table("line_sources")
+                        .update({"member_count": count})
+                        .eq("id", row["id"])
+                        .is_("member_count", "null")
+                        .execute())
+            updated += bool(response.data)
+        except Exception as error:
+            log(f"[GROUP ERROR] stage=sync_members type={type(error).__name__}")
+    return {"missing": len(rows), "updated": updated}
+
+
 def save_group_leave(event):
     """ซ่อนกลุ่มที่บอตออก โดยไม่ลบกลุ่ม ชื่อ หรือประวัติการตรวจ."""
     try:
@@ -123,10 +149,15 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None)
         source_id = source_response.data[0]["id"]
         text = event.message.text
         status = _status(result, text, kind)
+        sender_user_id = getattr(event.source, "user_id", None)
+        sender_display_name = (get_sender_display_name(kind, line_source_id, sender_user_id)
+                               if sender_user_id else None)
         row = {
             "line_event_id": event.webhook_event_id,
             "source_id": source_id,
             "source_type": kind,
+            "sender_user_id": sender_user_id,
+            "sender_display_name": sender_display_name,
             "message_text": text,
             "message_preview": text[:160],
             "received_at": datetime.fromtimestamp(event.timestamp / 1000, timezone.utc).isoformat(),

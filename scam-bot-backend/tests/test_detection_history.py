@@ -19,6 +19,7 @@ def load_history():
     messaging = ModuleType("messaging")
     messaging.get_group_name = Mock(return_value=None)
     messaging.get_group_member_count = Mock(return_value=None)
+    messaging.get_sender_display_name = Mock(return_value="ผู้ทดสอบ")
     path = Path(__file__).resolve().parents[1] / "detection_history.py"
     spec = importlib.util.spec_from_file_location("history_under_test", path)
     module = importlib.util.module_from_spec(spec)
@@ -64,6 +65,13 @@ class HistoryTests(unittest.TestCase):
         with patch.object(self.history, "log") as log:
             self.assertFalse(self.history.save_detection(self.event, {"is_scam": False}))
         self.assertNotIn("secret server message", log.call_args.args[0])
+
+    def test_saves_sender_id_and_display_name(self):
+        self.event.source.user_id = "U123456"
+        self.assertTrue(self.history.save_detection(self.event, {"is_scam": False}))
+        row = self.log_table.upsert.call_args.args[0]
+        self.assertEqual(row["sender_user_id"], "U123456")
+        self.assertEqual(row["sender_display_name"], "ผู้ทดสอบ")
 
 
 if __name__ == "__main__":

@@ -45,6 +45,30 @@ def get_group_name(group_id: str) -> str | None:
         return None
 
 
+def get_sender_display_name(kind: str, source_id: str, user_id: str) -> str | None:
+    """อ่านชื่อผู้ส่งจาก LINE; คืน None เมื่อ LINE ไม่อนุญาตหรืออ่านไม่สำเร็จ."""
+    if kind == "group":
+        path = f"group/{quote(source_id, safe='')}/member/{quote(user_id, safe='')}"
+    elif kind == "room":
+        path = f"room/{quote(source_id, safe='')}/member/{quote(user_id, safe='')}"
+    elif kind == "user":
+        path = f"profile/{quote(user_id, safe='')}"
+    else:
+        return None
+    try:
+        response = requests.get(
+            f"https://api.line.me/v2/bot/{path}",
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
+            timeout=3,
+        )
+        response.raise_for_status()
+        name = response.json().get("displayName")
+        return name.strip() if isinstance(name, str) and name.strip() else None
+    except (requests.RequestException, ValueError, AttributeError) as error:
+        print(f"[PROFILE ERROR] type={type(error).__name__}")
+        return None
+
+
 # 2. รับค่า: reply_token ของ event และ message_text ที่ต้องการตอบ
 # คืนค่า bool: True = LINE API ยอมรับ; False = HTTP/เครือข่ายผิดพลาด
 def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | None = None) -> bool:

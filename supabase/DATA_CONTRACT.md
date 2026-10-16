@@ -11,6 +11,7 @@
 | `id` | UUID ของผลตรวจที่ฐานข้อมูลสร้าง |
 | `line_event_id` | รหัสเหตุการณ์ LINE; unique เพื่อกันแถวซ้ำแม้ LINE ส่งซ้ำหรือบอตรีสตาร์ต |
 | `source_id`, `source_type` | อ้างอิง `line_sources`; `group`, `room` หรือ `user` |
+| `sender_user_id`, `sender_display_name` | LINE user ID และชื่อผู้ส่งที่อ่านได้ ณ เวลารับข้อความ; เป็น `null` ได้เมื่อ LINE ไม่ส่ง ID หรืออ่านชื่อไม่ได้ |
 | `message_text`, `message_preview` | ข้อความที่ตรวจฉบับเต็มและตัวอย่าง 160 ตัวอักษร; เฉพาะผู้ดูแลที่ได้รับสิทธิ์อ่าน |
 | `received_at` | เวลาเหตุการณ์จาก LINE เป็น UTC |
 | `detection_status` | `bypassed`, `conversation`, `no_risk_found`, `risk_found`, `uncertain`, `error` |

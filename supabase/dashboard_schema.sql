@@ -28,6 +28,8 @@ create table if not exists public.detection_logs (
   source_id uuid references public.line_sources(id) on delete set null,
   source_type text not null check (source_type in ('group', 'room', 'user')),
   message_text text not null,
+  sender_user_id text,
+  sender_display_name text,
   message_preview text not null,
   received_at timestamptz not null default now(),
   detection_status text not null check (detection_status in (
@@ -60,6 +62,9 @@ create index if not exists detection_logs_received_at_idx
   on public.detection_logs (received_at desc);
 create index if not exists detection_logs_source_received_at_idx
   on public.detection_logs (source_id, received_at desc);
+create index if not exists detection_logs_sender_user_id_idx
+  on public.detection_logs (sender_user_id)
+  where sender_user_id is not null;
 create index if not exists detection_logs_risk_received_at_idx
   on public.detection_logs (risk_level, received_at desc)
   where is_scam = true;

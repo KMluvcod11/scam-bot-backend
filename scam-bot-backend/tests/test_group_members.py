@@ -12,6 +12,24 @@ import test_webhook_threadpool as fixtures
 
 
 class MemberHistoryTests(unittest.TestCase):
+    def test_sync_only_updates_missing_group_count(self):
+        history = load_history()
+        db = Mock()
+        history._client = db
+        db.table.return_value.select.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value.data = [
+            {"id": "row-1", "line_source_id": "group-1"}
+        ]
+        db.table.return_value.update.return_value.eq.return_value.is_.return_value.execute.return_value.data = [
+            {"id": "row-1"}
+        ]
+        history.get_group_member_count.return_value = 3
+
+        result = history.sync_missing_group_members()
+
+        self.assertEqual(result, {"missing": 1, "updated": 1})
+        db.table.return_value.update.assert_called_once_with({"member_count": 3})
+        history.get_group_member_count.assert_called_once_with("group-1")
+
     def test_valid_counts_use_existing_history_client(self):
         for count in (0, 12):
             with self.subTest(count=count):

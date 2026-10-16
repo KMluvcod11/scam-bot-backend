@@ -39,6 +39,8 @@ python -m venv .venv
 
 Copy `scam-bot-backend/.env.example` to `scam-bot-backend/.env` if you do not already have a local configuration. Fill in the variables listed in the example. Configure `SUPABASE_HISTORY_KEY` on the backend as described in the data contract. Never commit credentials or put privileged keys in frontend code.
 
+Before running a sender-aware bot against an existing dashboard database, execute `supabase/add_detection_sender.sql` once in the Supabase SQL Editor. This adds the sender ID and display-name columns without changing existing history rows; then restart the bot and dashboard API.
+
 ```powershell
 Set-Location .\scam-bot-backend
 $env:PYTHONUTF8 = "1"
@@ -70,6 +72,8 @@ Dataset-script tests are separate and require the engine environment (including 
 ```
 
 Manual live checks are in `scam-bot-backend/scripts/`, outside test discovery. `smoke_search.py` calls Gemini/Supabase and uses quota; `smoke_history.py` writes a synthetic history record. Run them only deliberately with the backend Python environment. Importing these scripts does not start work.
+
+For existing LINE groups whose dashboard member count is "ไม่ระบุ", run `scam-bot-backend/scripts/sync_group_members.py` with the backend Python environment. It reads the current count from LINE and fills only `line_sources.member_count` values that are still null. New join/member-change webhooks continue to update counts normally.
 
 ## Dataset scripts
 
