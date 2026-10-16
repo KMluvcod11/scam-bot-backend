@@ -5,6 +5,58 @@ from urllib.parse import quote
 from bot_observability import log as print, timed_call
 from config import LINE_CHANNEL_ACCESS_TOKEN
 
+# จำกัดขนาดดาวน์โหลดของโปรเจกต์ไว้ที่ 5 MiB
+MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+def get_image_content(message_id: str) -> tuple[bytes, str] | None:
+    """ดาวน์โหลดรูปไว้ในหน่วยความจำ; คืนข้อมูลรูปกับชนิดไฟล์ หรือ None."""
+    try:
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise ValueError("Missing image message_id")
+
+        url = (
+            "https://api-data.line.me/v2/bot/message"
+            "/"f"{quote(message_id, safe='')}/content"
+        )
+
+        with requests.get(
+            url,
+            headers={"Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"},
+            timeout = (5, 10),
+            stream=True,
+            allow_redirects=False,
+        )as response:
+            response.raise_for_status()
+
+            if response.status_code != 200:
+                raise ValueError("Unexpected contentstatus")
+
+            main_type =(
+                response.headers.get("Content-Type", "")
+                .split(";")[0]
+                .strip()
+                .lower()
+            )
+            if main_type not in ("image/jpeg", "image/png", "image/webp"):
+                raise ValueError("Unsupported image type")
+
+            image_bytes = bytearray()
+
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if len(image_bytes) + len(chunk) > MAX_IMAGE_BYTES:
+                    raise ValueError("Image exceeds size limit")
+                image_bytes.extend(chunk)
+
+            if not image_bytes:
+                raise ValueError("Empty image content")
+
+            return bytes(image_bytes), main_type
+
+    except (requests.RequestException, ValueError) as error:
+        print(f"[IMAGE ERROR] stage=line_content type={type(error).__name__}")
+        return None
+
+
 
 def get_group_member_count(group_id: str) -> int | None:
     """ดึงจำนวนสมาชิกที่ไม่รวมบอต; ถ้าดึงไม่ได้คืน None เพื่อรักษาค่าเดิม."""
