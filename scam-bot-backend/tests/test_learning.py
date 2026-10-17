@@ -1,5 +1,6 @@
 """ทดสอบปุ่ม/เจ้าของ/หมดอายุ ผ่าน webhook จริงในเครื่อง ไม่เรียกบริการภายนอก."""
 import importlib.util
+import os
 from pathlib import Path
 import sys
 from types import ModuleType
@@ -177,7 +178,7 @@ class LearningPayloadTests(unittest.TestCase):
         module = importlib.util.module_from_spec(spec)
         with patch.object(sys, "path", [str(path.parent), *sys.path]), patch.dict(sys.modules, {"config": config}):
             spec.loader.exec_module(module)
-        with patch.object(module.requests, "post", return_value=Mock()) as post:
+        with patch.dict(os.environ, {"MINI_LIFF_ID": "", "LINE_LOGIN_CHANNEL_ID": ""}), patch.object(module.requests, "post", return_value=Mock()) as post:
             self.assertTrue(module.reply_to_line("offline-reply", "ผลตรวจ", learn_case_id="a" * 32))
             payload = post.call_args.kwargs["json"]
             self.assertEqual(len(payload["messages"]), 2)
@@ -190,6 +191,11 @@ class LearningPayloadTests(unittest.TestCase):
             self.assertNotIn("text", action)
             module.reply_to_line("offline-reply", "ผลตรวจ")
             self.assertEqual(post.call_args.kwargs["json"]["messages"], [{"type": "text", "text": "ผลตรวจ"}])
+            with patch.dict(os.environ, {"MINI_LIFF_ID": "1234567890-TestApp", "LINE_LOGIN_CHANNEL_ID": "1234567890"}):
+                module.reply_to_line("offline-reply", "ผลตรวจ", learn_case_id="a" * 32)
+                action = post.call_args.kwargs["json"]["messages"][1]["template"]["actions"][0]
+                self.assertEqual(action, {"type": "uri", "label": "เรียนรู้จากเคสนี้",
+                    "uri": "https://liff.line.me/1234567890-TestApp?case=" + "a" * 32})
 
 
 if __name__ == "__main__":

@@ -16,8 +16,8 @@ class EventGuard:
         self._completed = OrderedDict()
         self._lock = Lock()
 
-    def claim(self, event_id: str) -> str:
-        """จอง ID ก่อนเริ่มงาน: คืน new, duplicate หรือ full โดยตรวจและจองพร้อมกัน."""
+    def claim_batch(self, event_ids: list[str]) -> list[str] | None:
+        """จองทั้งชุดพร้อมกัน; ถ้าที่ไม่พอจะไม่จองบางส่วนแล้วตอบ 503."""
         with self._lock:
             now = self.clock()
             while self._completed:
@@ -25,13 +25,26 @@ class EventGuard:
                 if self._completed[oldest] > now:
                     break
                 self._completed.popitem(last=False)
-            if event_id in self._active or event_id in self._completed:
-                return "duplicate"
-            # ไม่ลบงานที่ยังไม่หมดอายุเพื่อรับงานใหม่ เพราะจะทำให้ event เก่าถูกทำซ้ำ
-            if len(self._active) + len(self._completed) >= self.max_entries:
-                return "full"
-            self._active.add(event_id)
-            return "new"
+
+            new_ids = set()
+            claims = []
+            for event_id in event_ids:
+                if event_id in self._active or event_id in self._completed or event_id in new_ids:
+                    claims.append("duplicate")
+                    continue
+                # ไม่ลบงานที่ยังไม่หมดอายุเพื่อรับงานใหม่ เพราะจะทำให้ event เก่าถูกทำซ้ำ
+                if len(self._active) + len(self._completed) + len(new_ids) >= self.max_entries:
+                    return None
+                new_ids.add(event_id)
+                claims.append("new")
+
+            self._active.update(new_ids)
+            return claims
+
+    def claim(self, event_id: str) -> str:
+        """ทางเรียกเดิมสำหรับหนึ่ง event; คืน new, duplicate หรือ full."""
+        claims = self.claim_batch([event_id])
+        return claims[0] if claims is not None else "full"
 
     def finish(self, event_id: str) -> None:
         """จำว่าเคยพยายามทำแล้ว แม้ตรวจ/ส่งไม่สำเร็จ ตามนโยบายไม่ retry อัตโนมัติ."""

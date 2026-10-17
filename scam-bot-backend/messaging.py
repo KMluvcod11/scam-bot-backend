@@ -4,6 +4,7 @@ import requests
 from urllib.parse import quote
 from bot_observability import log as print, timed_call
 from config import LINE_CHANNEL_ACCESS_TOKEN
+from mini_api import get_mini_case_url
 
 # จำกัดขนาดดาวน์โหลดของโปรเจกต์ไว้ที่ 5 MiB
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -135,6 +136,11 @@ def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | N
         "messages": [{"type": "text", "text": message_text}]
     }
     if learn_case_id:
+        mini_url = get_mini_case_url(learn_case_id)
+        action = {"type": "uri", "label": "เรียนรู้จากเคสนี้", "uri": mini_url} if mini_url else {
+            "type": "postback", "label": "เรียนรู้จากเคสนี้",
+            "data": f"learn:{learn_case_id}", "displayText": "เรียนรู้จากข้อความนี้",
+        }
         # ปุ่มส่งเพียงรหัสสุ่ม ไม่ฝังข้อความที่ตรวจหรือ user ID ใน postback
         payload["messages"].append({
             "type": "template",
@@ -142,11 +148,7 @@ def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | N
             "template": {
                 "type": "buttons",
                 "text": "เรียนรู้จากผลตรวจด้านบน\nปุ่มมีอายุ 15 นาที หรือจนกว่าบอตจะรีสตาร์ต",
-                "actions": [{
-                    "type": "postback", "label": "เรียนรู้จากเคสนี้",
-                    "data": f"learn:{learn_case_id}",
-                    "displayText": "เรียนรู้จากข้อความนี้",
-                }],
+                "actions": [action],
             },
         })
     # 2.2 ส่งคำตอบโดยมี timeout; ไม่มีการ retry อัตโนมัติในฟังก์ชันนี้

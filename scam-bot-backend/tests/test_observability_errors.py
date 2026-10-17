@@ -40,6 +40,14 @@ class ObservabilityErrorTests(unittest.TestCase):
                 error.code, error.status = code, status
                 self.assertEqual(observability.error_summary(error), "type=RuntimeError")
 
+    def test_database_codes_are_logged_without_error_text(self):
+        for code in ("42501", "42P01", "PGRST116"):
+            error = RuntimeError("SECRET_MESSAGE")
+            error.code = code
+            error.details = "SECRET_DETAILS"
+            self.assertEqual(observability.error_summary(error),
+                             f"type=RuntimeError code={code}")
+
     def test_error_without_sdk_fields_still_works(self):
         self.assertEqual(observability.error_summary(TimeoutError("SECRET")), "type=TimeoutError")
 

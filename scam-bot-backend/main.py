@@ -10,6 +10,8 @@ from bot_observability import log as print, trace_id, timed_call
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from starlette.background import BackgroundTask
 from linebot.v3.exceptions import InvalidSignatureError
 from linebot.v3.webhook import WebhookParser
 from linebot.v3.webhooks import (
@@ -26,7 +28,8 @@ from config import LINE_CHANNEL_SECRET
 from detector import analyze_message,extract_text_from_image,find_similarity
 from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
-from learning import LessonStore, build_lesson
+from learning import LessonStore, build_lesson, build_case_detail
+from mini_api import create_mini_router, mini_web_origins
 from detection_history import save_detection, save_group_join, save_group_leave, save_group_members
 
 # 2. ประกาศแอปและตัวตรวจลายเซ็นจาก Channel Secret
@@ -34,6 +37,9 @@ app = FastAPI(title="Scam Detection AI Bot")
 parser = WebhookParser(LINE_CHANNEL_SECRET)
 event_guard = EventGuard()
 lesson_store = LessonStore()
+app.add_middleware(CORSMiddleware, allow_origins=mini_web_origins(),
+                   allow_methods=["GET"], allow_headers=["Authorization"])
+app.include_router(create_mini_router(lambda: lesson_store))
 
 
 def parse_webhook(body: bytes, signature: str | None):
@@ -148,7 +154,8 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
         print(f"[WEBHOOK] request={request_id} rejected={error.status_code} elapsed={monotonic() - received:.2f}s")
         raise
 
-    # 5. รับ Text และรูปภาพ; สื่ออื่นตอบเฉพาะแชตส่วนตัว 
+    # 5. รับข้อความและรูปภาพ แล้วจอง ID ก่อนตอบเพื่อไม่ทำ event เดิมซ้ำ
+    candidates = []
     for event in events:
         is_private_postback = isinstance(event, PostbackEvent) and event.source.type == "user"
         is_supported_message = isinstance(event, MessageEvent) and (
@@ -159,32 +166,56 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
         is_group_leave = isinstance(event, LeaveEvent) and event.source.type == "group"
         is_group_member_change = isinstance(event, (MemberJoinedEvent, MemberLeftEvent)) and event.source.type == "group"
         if is_private_postback or is_supported_message or is_group_join or is_group_leave or is_group_member_change:
-            claim = event_guard.claim(event.webhook_event_id)
-            event_ref = sha256(event.webhook_event_id.encode()).hexdigest()[:12]
-            print(f"[EVENT] request={request_id} event={event_ref} claim={claim} dispatch_after={monotonic() - received:.2f}s")
-            if claim == "duplicate":
-                print("[DUPLICATE] ข้าม event เดิมที่กำลังทำหรือเคยทำแล้ว")
-                continue
-            if claim == "full":
-                print("[BUSY] ที่เก็บ event ID เต็ม ยังไม่รับ event ใหม่")
-                raise HTTPException(status_code=503, detail="Event capacity reached")
-            try:
-                if is_group_join:
-                    await run_in_threadpool(timed_call, "group_join", save_group_join, event)
-                elif is_group_leave:
-                    await run_in_threadpool(timed_call, "group_leave", save_group_leave, event)
-                elif is_group_member_change:
-                    await run_in_threadpool(timed_call, "group_members", save_group_members, event)
-                else:
-                    await process_text_event(event)
-            finally:
-                event_guard.finish(event.webhook_event_id)
+            if is_group_join:
+                kind = "group_join"
+            elif is_group_leave:
+                kind = "group_leave"
+            elif is_group_member_change:
+                kind = "group_members"
+            else:
+                kind = "message"
+            candidates.append((event, kind))
         else:
             print("[SKIP] ไม่ใช่ข้อความ Text ที่บอทรองรับ")
 
-    # คืน 200 หลังพยายามทำครบ ไม่ใช่หลักฐานว่าทุกข้อความตรวจหรือส่งสำเร็จ
-    print(f"[WEBHOOK] request={request_id} events={len(events)} elapsed={monotonic() - received:.2f}s")
-    return JSONResponse(content="OK", status_code=200)
+    claims = event_guard.claim_batch([event.webhook_event_id for event, _ in candidates])
+    if claims is None:
+        print("[BUSY] ที่เก็บ event ID เต็ม ยังไม่รับ event ชุดนี้")
+        raise HTTPException(status_code=503, detail="Event capacity reached")
+
+    accepted = []
+    for (event, kind), claim in zip(candidates, claims):
+        event_ref = sha256(event.webhook_event_id.encode()).hexdigest()[:12]
+        print(f"[EVENT] request={request_id} event={event_ref} claim={claim} dispatch_after={monotonic() - received:.2f}s")
+        if claim == "new":
+            accepted.append((event, kind))
+        else:
+            print("[DUPLICATE] ข้าม event เดิมที่กำลังทำหรือเคยทำแล้ว")
+
+    # Starlette ส่ง response ก่อนรัน BackgroundTask; LINE จึงไม่ต้องรอ AI/LINE API/ฐานข้อมูล
+    print(f"[WEBHOOK] request={request_id} events={len(events)} accepted={len(accepted)} ack_ready_after={monotonic() - received:.2f}s")
+    background = BackgroundTask(process_accepted_events, accepted, request_id) if accepted else None
+    return JSONResponse(content="OK", status_code=200, background=background)
+
+
+async def process_accepted_events(accepted, request_id):
+    """ทำงานหลังส่ง HTTP 200; จบทีละ event และปล่อย ID แม้ขั้นใดเกิดข้อผิดพลาด."""
+    started = monotonic()
+    for event, kind in accepted:
+        try:
+            if kind == "group_join":
+                await run_in_threadpool(timed_call, "group_join", save_group_join, event)
+            elif kind == "group_leave":
+                await run_in_threadpool(timed_call, "group_leave", save_group_leave, event)
+            elif kind == "group_members":
+                await run_in_threadpool(timed_call, "group_members", save_group_members, event)
+            else:
+                await process_text_event(event)
+        except Exception as error:
+            print(f"[EVENT ERROR] request={request_id} type={type(error).__name__}")
+        finally:
+            event_guard.finish(event.webhook_event_id)
+    print(f"[WEBHOOK] request={request_id} processed={len(accepted)} processing_elapsed={monotonic() - started:.2f}s")
 
 
 async def process_text_event(event: MessageEvent | PostbackEvent):
@@ -392,7 +423,9 @@ async def process_private_event(event: MessageEvent):
             try:
                 lesson = build_lesson(event.message.text, result)
                 if lesson:
-                    case_id = lesson_store.add(getattr(event.source, "user_id", None), lesson)
+                    received_at = datetime.fromtimestamp(event.timestamp / 1000, timezone.utc).isoformat()
+                    detail = build_case_detail(event.message.text, result, received_at)
+                    case_id = lesson_store.add(getattr(event.source, "user_id", None), lesson, detail=detail)
                     if not case_id:
                         print("[LEARNING] ไม่เพิ่มปุ่ม: ไม่มีเจ้าของหรือที่เก็บเต็ม")
             except Exception as error:

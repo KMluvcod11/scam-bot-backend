@@ -65,6 +65,23 @@ class HistoryTests(unittest.TestCase):
         with patch.object(self.history, "log") as log:
             self.assertFalse(self.history.save_detection(self.event, {"is_scam": False}))
         self.assertNotIn("secret server message", log.call_args.args[0])
+        self.assertIn("stage=line_sources", log.call_args.args[0])
+
+    def test_failure_identifies_table_and_safe_postgrest_code(self):
+        for table in ("line_sources", "detection_logs"):
+            with self.subTest(table=table):
+                error = RuntimeError("SECRET_MESSAGE")
+                error.code = "42501"
+                error.details = "SECRET_DETAILS"
+                target = self.source_table if table == "line_sources" else self.log_table
+                target.upsert.return_value.execute.side_effect = error
+                with patch.object(self.history, "log") as log:
+                    self.assertFalse(self.history.save_detection(self.event, {"is_scam": False}))
+                recorded = log.call_args.args[0]
+                self.assertIn(f"stage={table}", recorded)
+                self.assertIn("code=42501", recorded)
+                self.assertNotIn("SECRET", recorded)
+                target.upsert.return_value.execute.side_effect = None
 
     def test_saves_sender_id_and_display_name(self):
         self.event.source.user_id = "U123456"

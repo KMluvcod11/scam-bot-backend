@@ -30,7 +30,7 @@
 ## เปิดใช้งาน
 
 1. รัน `dashboard_schema.sql` ใน SQL Editor ของ Supabase อีกครั้งเพื่อให้การตั้งค่าสิทธิ์ของ view ล่าสุดมีผล
-2. ตั้ง `SUPABASE_HISTORY_KEY` เป็น service role key ในสภาพแวดล้อมของ Backend เท่านั้น และรีสตาร์ตบอต
+2. ตั้ง `SUPABASE_HISTORY_KEY` เป็น `sb_secret_...` (หรือ service_role key แบบเก่า) ใน `.env` ของ Backend บอตเท่านั้น แล้วรีสตาร์ตบอต ควรสร้างคีย์แยกสำหรับบอตในระยะยาว อย่าใช้คีย์ `anon` เพราะนโยบายตารางนี้ไม่อนุญาตให้เขียน
 3. ส่งข้อความ text ผ่าน LINE หนึ่งครั้ง แล้วดูแถวใหม่ใน `line_sources` และ `detection_logs`
 4. ส่งเหตุการณ์ `webhookEventId` เดิมอีกครั้ง: จำนวนแถวใน `detection_logs` ต้องไม่เพิ่ม
 

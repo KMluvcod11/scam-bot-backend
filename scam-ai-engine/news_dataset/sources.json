@@ -1,0 +1,50 @@
+[
+  {
+    "id": "N01",
+    "title": "อ้างบริษัทขนส่ง ส่ง SMS หลอกโอนเงิน",
+    "url": "https://www.thaipbs.or.th/news/content/352261",
+    "kind": "news",
+    "published_date": "2025-05-18",
+    "pattern": "อ้างพัสดุมีปัญหาและคืนเงินประกันเพื่อพาไปทำตามคำสั่ง"
+  },
+  {
+    "id": "N02",
+    "title": "ปลอมแอปพลิเคชัน ชวนลงทุนสูญเงิน 1.5 ล้านบาท",
+    "url": "https://www.thaipbs.or.th/program/ThaiPBSNews/watch/215656",
+    "kind": "news",
+    "published_date": null,
+    "pattern": "งานรีวิวสินค้า ต้องเติมเงินเพิ่มก่อนถอนยอด"
+  },
+  {
+    "id": "N03",
+    "title": "สถานีร้องเรียน : เตือนภัย กู้เงินออนไลน์",
+    "url": "https://www.thaipbs.or.th/program/People/watch/gquidF",
+    "kind": "news",
+    "published_date": null,
+    "pattern": "กู้เงินออนไลน์แล้วถูกหลอกให้โอนเงิน"
+  },
+  {
+    "id": "N04",
+    "title": "SMS หลอกติดตั้งแอปพลิเคชันดูดเงิน",
+    "url": "https://www.thaipbs.or.th/program/NewsHour/watch/179337",
+    "kind": "news",
+    "published_date": null,
+    "pattern": "ส่ง SMS ล่อให้ติดตั้งแอปปลอม"
+  },
+  {
+    "id": "N05",
+    "title": "หลอกลงทุนออนไลน์ รวยง่ายไม่มีจริง",
+    "url": "https://www.thaipbs.or.th/program/TicTacTech/episodes/109473",
+    "kind": "news_explainer",
+    "published_date": null,
+    "pattern": "ชวนลงทุนและอ้างรับประกันผลตอบแทน"
+  },
+  {
+    "id": "A01",
+    "title": "กลโกงธนาคารออนไลน์",
+    "url": "https://www.bot.or.th/th/satang-story/fraud/online-fraud.html",
+    "kind": "official_advisory",
+    "published_date": null,
+    "pattern": "อ้างบัญชีมีปัญหา ให้กรอกข้อมูลหรือ OTP ผ่านลิงก์"
+  }
+]

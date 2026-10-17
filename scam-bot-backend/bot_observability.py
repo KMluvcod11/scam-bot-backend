@@ -1,5 +1,6 @@
 """ติดรหัสงานสั้นใน log เดิม และแสดงเวลาแต่ละขั้นโดยไม่เผยข้อมูลคำขอ."""
 import builtins
+import re
 from contextvars import ContextVar
 from time import monotonic
 
@@ -20,6 +21,9 @@ def error_summary(error):
     code = getattr(error, "code", None)
     status = getattr(error, "status", None)
     if type(code) is int and 400 <= code <= 599:
+        fields.append(f"code={code}")
+    elif type(code) is str and re.fullmatch(r"(?:[0-9A-Z]{5}|PGRST[0-9]{3})", code):
+        # Supabase คืน SQLSTATE/PostgREST code เป็นข้อความ; ไม่พิมพ์ message/hint/details
         fields.append(f"code={code}")
     if isinstance(status, str) and status in ERROR_STATUSES:
         fields.append(f"status={status}")

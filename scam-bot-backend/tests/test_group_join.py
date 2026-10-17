@@ -45,6 +45,15 @@ class JoinWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.module.save_group_join.return_value = False
         self.assertEqual((await self.post_events([join_event()])).status_code, 200)
 
+    async def test_background_join_exception_does_not_skip_next_event(self):
+        self.module.save_group_join.side_effect = RuntimeError("SECRET_SERVER_MESSAGE")
+        with patch('builtins.print') as output:
+            response = await self.post_events([join_event(), webhook_tests.text_event(number=2)])
+        self.assertEqual(response.status_code, 200)
+        self.module.analyze_message.assert_called_once()
+        self.assertIn('[EVENT ERROR]', str(output.call_args_list))
+        self.assertNotIn('SECRET_SERVER_MESSAGE', str(output.call_args_list))
+
     async def test_bad_signature_and_invalid_join_do_not_write(self):
         self.assertEqual((await self.post_events([join_event()], False)).status_code, 400)
         for field, value in [('source', {}), ('source', {'type': 'group'}), ('timestamp', -1), ('timestamp', True), ('timestamp', 'now'), ('webhookEventId', '')]:

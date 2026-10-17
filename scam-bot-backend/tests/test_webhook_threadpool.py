@@ -18,6 +18,7 @@ import fastapi
 import fastapi.concurrency
 import linebot.v3.webhook
 import linebot.v3.webhooks
+from starlette.requests import Request
 
 
 def load_app():
@@ -78,6 +79,55 @@ def image_event(number=1):
 
 
 class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
+    async def test_http_response_is_sent_before_slow_analysis(self):
+        started, release = threading.Event(), threading.Event()
+
+        def slow_analysis(text):
+            started.set()
+            if not release.wait(3):
+                raise TimeoutError("offline worker was not released")
+            return {"is_scam": False}
+
+        self.module.analyze_message.side_effect = slow_analysis
+        body = json.dumps({"destination": "offline-bot", "events": [text_event()]}).encode()
+        signature = base64.b64encode(hmac.new(
+            b"offline-test-secret", body, hashlib.sha256,
+        ).digest()).decode()
+        scope = {"type": "http", "method": "POST", "path": "/webhook", "headers": [],
+                 "http_version": "1.1", "asgi": {"version": "3.0"}}
+        received = False
+
+        async def receive():
+            nonlocal received
+            if not received:
+                received = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        response = await self.module.line_webhook(Request(scope, receive), signature)
+        self.assertEqual(response.status_code, 200)
+        self.module.analyze_message.assert_not_called()
+
+        body_sent = asyncio.Event()
+
+        async def send(message):
+            if message["type"] == "http.response.body":
+                body_sent.set()
+
+        task = asyncio.create_task(response(scope, receive, send))
+        try:
+            await asyncio.wait_for(body_sent.wait(), timeout=1)
+            for _ in range(100):
+                if started.is_set():
+                    break
+                await asyncio.sleep(0.01)
+            self.assertTrue(started.is_set())
+            self.assertFalse(task.done())
+        finally:
+            release.set()
+            await asyncio.wait_for(task, timeout=5)
+        self.module.analyze_message.assert_called_once()
+
     async def test_receipt_duplicate_and_total_logs_without_identifiers(self):
         with patch('builtins.print') as output:
             first = await self.post_events([text_event()])
@@ -85,7 +135,8 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((first.status_code, second.status_code), (200, 200))
         self.module.analyze_message.assert_called_once()
         logs = str(output.call_args_list)
-        for marker in ('received_at=', 'claim=new', 'claim=duplicate', 'dispatch_after=', 'stage=history', 'stage=event_total'):
+        for marker in ('received_at=', 'claim=new', 'claim=duplicate', 'dispatch_after=',
+                       'ack_ready_after=', 'processing_elapsed=', 'stage=history', 'stage=event_total'):
             self.assertIn(marker, logs)
         for secret in ('event-1', 'reply-1', 'offline-user', 'offline-test-secret'):
             self.assertNotIn(secret, logs)

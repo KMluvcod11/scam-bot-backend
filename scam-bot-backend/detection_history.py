@@ -139,8 +139,10 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None)
         log("[HISTORY ERROR] stage=source missing_id")
         return False
 
+    stage = "client"
     try:
         db = _history_client()
+        stage = "line_sources"
         source_response = db.table("line_sources").upsert({
             "line_source_id": line_source_id,
             "source_type": kind,
@@ -170,10 +172,11 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None)
             "warning_sent": warning_sent,
             "error_stage": result.get("error_stage"),
         }
+        stage = "detection_logs"
         db.table("detection_logs").upsert(
             row, on_conflict="line_event_id", ignore_duplicates=True,
         ).execute()
         return True
     except Exception as error:
-        log(f"[HISTORY ERROR] stage=database {error_summary(error)}")
+        log(f"[HISTORY ERROR] stage={stage} {error_summary(error)}")
         return False

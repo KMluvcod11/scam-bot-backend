@@ -1,0 +1,42 @@
+{
+  "rows": 1000,
+  "labels": {
+    "ham": 500,
+    "spam": 500
+  },
+  "unique_normalized_texts": 1000,
+  "overlap_existing_database_and_pilot": 0,
+  "existing_database_rows": 2971,
+  "source_count": 30,
+  "independent_template_count": 200,
+  "variants_per_template": 5,
+  "splits": {
+    "train": 800,
+    "test": 100,
+    "validation": 100
+  },
+  "split_policy": "family holdout: romance=test, recovery=validation, other eight=train",
+  "label_meaning": "spam=scam-pattern synthetic text, ham=benign or warning/report",
+  "all_require_human_review": true,
+  "embeddings_checked": false,
+  "length_under_40": {
+    "spam": 79,
+    "ham": 90
+  },
+  "url_count_by_label": {
+    "spam": 50,
+    "ham": 50
+  },
+  "example_types": {
+    "benign_near_miss": 400,
+    "scam": 500,
+    "warning_or_report": 100
+  },
+  "snapshot_sha256": "b36e6e9f8acf0c1258f5b9ae74a6e642862cabe65229e1beef0aac4d76647a22",
+  "limitations": [
+    "1000 augmented examples from 200 templates, not 1000 independent cases",
+    "Exact/normalized checks do not prove absence of semantic duplicates",
+    "Existing database source provenance unknown; split isolation applies only to new dataset",
+    "All training labels are proposed and need review; no model performance evaluation"
+  ]
+}

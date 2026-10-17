@@ -47,6 +47,12 @@ class EventGuardTests(unittest.TestCase):
         self.assertEqual(results.count("new"), 1)
         self.assertEqual(results.count("duplicate"), 29)
 
+    def test_batch_is_atomic_when_capacity_is_full(self):
+        self.assertIsNone(self.guard.claim_batch(["a", "b", "c"]))
+        self.assertEqual(self.guard.claim_batch(["a", "a", "b"]),
+                         ["new", "duplicate", "new"])
+        self.assertEqual(self.guard.claim("c"), "full")
+
 
 class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
     # ใช้ตัวช่วยเดิม แต่ไม่สืบทอด test เดิมมารันซ้ำ
@@ -181,6 +187,14 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.event_guard.max_entries = 1
         self.assertEqual((await self.post_events([fixtures.text_event(number=1)])).status_code, 200)
         self.assertEqual((await self.post_events([fixtures.text_event(number=2)])).status_code, 503)
+        self.module.analyze_message.assert_called_once()
+
+    async def test_full_batch_does_not_reserve_earlier_event(self):
+        self.module.event_guard.max_entries = 1
+        response = await self.post_events([fixtures.text_event(number=1), fixtures.text_event(number=2)])
+        self.assertEqual(response.status_code, 503)
+        self.module.analyze_message.assert_not_called()
+        self.assertEqual((await self.post_events([fixtures.text_event(number=1)])).status_code, 200)
         self.module.analyze_message.assert_called_once()
 
     async def test_normal_nonwarning_log_does_not_claim_safety(self):
