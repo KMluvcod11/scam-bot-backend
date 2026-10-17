@@ -23,7 +23,7 @@ from linebot.v3.webhooks import (
     ImageMessageContent,
 )
 from config import LINE_CHANNEL_SECRET
-from detector import analyze_message
+from detector import analyze_message,extract_text_from_image
 from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
@@ -230,7 +230,23 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
         else:
             image_bytes, mime_type = image_content
             print(f"[IMAGE] bytes={len(image_bytes)} mime={mime_type}")
-            print("[ACTION] ดาวน์โหลดรูปแล้ว ยังไม่ได้วิเคราะห์")
+
+            try:
+                ocr_result = await run_in_threadpool(
+                    extract_text_from_image,
+                    image_bytes,
+                    mime_type=mime_type,
+                )
+            except Exception as error:
+                print(
+                    f"[OCR ERROR] stage=webhook "
+                    f"type={type(error).__name__}"
+                )
+                ocr_result = {"status": "error", "text": ""}
+            print(
+                f"[OCR] status={ocr_result['status']} "
+                f"chars={len(ocr_result['text'])}"
+            )
 
         if event.source.type == "user":
             await process_private_event(event)

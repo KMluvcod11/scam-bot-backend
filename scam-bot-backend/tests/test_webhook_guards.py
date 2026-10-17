@@ -288,5 +288,127 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_IMAGE", str(logs.call_args_list))
 
 
+    async def test_image_ocr_runs_once_in_worker_after_download_without_logging_content(self):
+        request_thread = threading.get_ident()
+        stages = []
+        image_bytes = b"SECRET_IMAGE_DATA"
+
+        def download(message_id):
+            stages.append(("download", threading.get_ident()))
+            return image_bytes, "image/png"
+
+        def read_image(data, mime_type):
+            stages.append(("ocr", threading.get_ident()))
+            return {"status": "ok", "text": "SECRET_OCR_TEXT"}
+
+        self.module.get_image_content.side_effect = download
+        self.module.extract_text_from_image.side_effect = read_image
+        event = fixtures.image_event()
+
+        with patch("builtins.print") as logs:
+            response = await self.post_events([event, event])
+
+        self.assertEqual(response.status_code, 200)
+        self.module.get_image_content.assert_called_once_with("1")
+        self.module.extract_text_from_image.assert_called_once_with(
+            image_bytes, "image/png"
+        )
+        self.assertEqual([stage for stage, _ in stages], ["download", "ocr"])
+        for stage, thread_id in stages:
+            with self.subTest(stage=stage):
+                self.assertNotEqual(thread_id, request_thread)
+        self.module.analyze_message.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+        self.assertIn("status=ok", str(logs.call_args_list))
+        self.assertIn("chars=15", str(logs.call_args_list))
+        self.assertNotIn("SECRET_IMAGE_DATA", str(logs.call_args_list))
+        self.assertNotIn("SECRET_OCR_TEXT", str(logs.call_args_list))
+
+    async def test_failed_download_does_not_call_ocr(self):
+        failures = (None, RuntimeError("SECRET_DOWNLOAD"))
+        for number, error in enumerate(failures, start=1):
+            with self.subTest(error=type(error).__name__):
+                self.module.get_image_content.reset_mock()
+                self.module.get_image_content.return_value = None
+                self.module.get_image_content.side_effect = error
+
+                with patch("builtins.print") as logs:
+                    response = await self.post_events([
+                        fixtures.image_event(number=number)
+                    ])
+
+                self.assertEqual(response.status_code, 200)
+                self.module.get_image_content.assert_called_once_with(str(number))
+                self.module.extract_text_from_image.assert_not_called()
+                self.assertNotIn("SECRET_DOWNLOAD", str(logs.call_args_list))
+
+        self.module.analyze_message.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_uncertain_or_failed_ocr_is_not_treated_as_a_risk_assessment(self):
+        for number, status in enumerate(("uncertain", "error"), start=1):
+            with self.subTest(status=status):
+                self.module.extract_text_from_image.reset_mock()
+                self.module.extract_text_from_image.return_value = {
+                    "status": status,
+                    "text": "",
+                }
+
+                with patch("builtins.print") as logs:
+                    response = await self.post_events([
+                        fixtures.image_event(number=number)
+                    ])
+
+                self.assertEqual(response.status_code, 200)
+                self.module.extract_text_from_image.assert_called_once_with(
+                    b"offline-image", "image/jpeg"
+                )
+                self.assertIn(f"status={status}", str(logs.call_args_list))
+                self.assertIn("chars=0", str(logs.call_args_list))
+
+        self.module.analyze_message.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_ocr_exception_keeps_next_text_working_without_secret_logs(self):
+        self.module.extract_text_from_image.side_effect = RuntimeError(
+            "SECRET_OCR_ERROR"
+        )
+
+        with patch("builtins.print") as logs:
+            response = await self.post_events([
+                fixtures.image_event(),
+                fixtures.text_event("ข้อความถัดไป", number=2),
+            ])
+
+        self.assertEqual(response.status_code, 200)
+        self.module.get_image_content.assert_called_once_with("1")
+        self.module.extract_text_from_image.assert_called_once_with(
+            b"offline-image", "image/jpeg"
+        )
+        self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_called_once()
+        self.assertIn("status=error", str(logs.call_args_list))
+        self.assertIn("chars=0", str(logs.call_args_list))
+        self.assertNotIn("SECRET_OCR_ERROR", str(logs.call_args_list))
+
+    async def test_private_image_runs_ocr_once_and_replies_once_without_assessment(self):
+        event = fixtures.image_event()
+        event["source"] = {"type": "user", "userId": "U-private"}
+
+        response = await self.post_events([event, event])
+
+        self.assertEqual(response.status_code, 200)
+        self.module.extract_text_from_image.assert_called_once_with(
+            b"offline-image", "image/jpeg"
+        )
+        self.module.reply_to_line.assert_called_once()
+        self.module.analyze_message.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

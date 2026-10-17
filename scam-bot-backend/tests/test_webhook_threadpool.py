@@ -26,6 +26,10 @@ def load_app():
     config.LINE_CHANNEL_SECRET = "offline-test-secret"
     detector = ModuleType("detector")
     detector.analyze_message = Mock(return_value={"is_scam": False})
+    detector.extract_text_from_image = Mock(
+        spec=lambda image_bytes, mime_type: None,
+        return_value={"status": "ok", "text": "ข้อความจากรูปสำหรับทดสอบ"}
+    )
     messaging = ModuleType("messaging")
     messaging.reply_to_line = Mock(return_value=True)
     messaging.get_image_content = Mock(return_value=(b"offline-image", "image/jpeg"))
