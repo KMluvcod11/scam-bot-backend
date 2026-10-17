@@ -288,7 +288,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_IMAGE", str(logs.call_args_list))
 
 
-    async def test_image_ocr_runs_once_in_worker_after_download_without_logging_content(self):
+    async def test_image_dataset_lookup_runs_once_after_ocr_in_worker_without_content_logs(self):
         request_thread = threading.get_ident()
         stages = []
         image_bytes = b"SECRET_IMAGE_DATA"
@@ -301,8 +301,13 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             stages.append(("ocr", threading.get_ident()))
             return {"status": "ok", "text": "SECRET_OCR_TEXT"}
 
+        def match_dataset(text):
+            stages.append(("dataset", threading.get_ident()))
+            return 87.5, "spam"
+
         self.module.get_image_content.side_effect = download
         self.module.extract_text_from_image.side_effect = read_image
+        self.module.find_similarity.side_effect = match_dataset
         event = fixtures.image_event()
 
         with patch("builtins.print") as logs:
@@ -313,7 +318,10 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.extract_text_from_image.assert_called_once_with(
             image_bytes, "image/png"
         )
-        self.assertEqual([stage for stage, _ in stages], ["download", "ocr"])
+        self.module.find_similarity.assert_called_once_with("SECRET_OCR_TEXT")
+        self.assertEqual(
+            [stage for stage, _ in stages], ["download", "ocr", "dataset"]
+        )
         for stage, thread_id in stages:
             with self.subTest(stage=stage):
                 self.assertNotEqual(thread_id, request_thread)
@@ -322,6 +330,8 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.save_detection.assert_not_called()
         self.assertIn("status=ok", str(logs.call_args_list))
         self.assertIn("chars=15", str(logs.call_args_list))
+        self.assertIn("similarity=87.50%", str(logs.call_args_list))
+        self.assertIn("label=spam", str(logs.call_args_list))
         self.assertNotIn("SECRET_IMAGE_DATA", str(logs.call_args_list))
         self.assertNotIn("SECRET_OCR_TEXT", str(logs.call_args_list))
 
@@ -341,6 +351,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 self.module.get_image_content.assert_called_once_with(str(number))
                 self.module.extract_text_from_image.assert_not_called()
+                self.module.find_similarity.assert_not_called()
                 self.assertNotIn("SECRET_DOWNLOAD", str(logs.call_args_list))
 
         self.module.analyze_message.assert_not_called()
@@ -367,6 +378,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.assertIn(f"status={status}", str(logs.call_args_list))
                 self.assertIn("chars=0", str(logs.call_args_list))
+                self.module.find_similarity.assert_not_called()
 
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
@@ -394,6 +406,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("status=error", str(logs.call_args_list))
         self.assertIn("chars=0", str(logs.call_args_list))
         self.assertNotIn("SECRET_OCR_ERROR", str(logs.call_args_list))
+        self.module.find_similarity.assert_not_called()
 
     async def test_private_image_runs_ocr_once_and_replies_once_without_assessment(self):
         event = fixtures.image_event()
@@ -405,9 +418,61 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.extract_text_from_image.assert_called_once_with(
             b"offline-image", "image/jpeg"
         )
+        self.module.find_similarity.assert_called_once_with(
+            self.module.extract_text_from_image.return_value["text"]
+        )
         self.module.reply_to_line.assert_called_once()
         self.module.analyze_message.assert_not_called()
         self.module.save_detection.assert_not_called()
+
+
+    async def test_image_dataset_miss_or_ham_match_remains_metadata_only(self):
+        for number, result in enumerate(((0.0, None), (96.0, "ham")), start=1):
+            with self.subTest(result=result):
+                self.module.find_similarity.reset_mock()
+                self.module.find_similarity.return_value = result
+
+                with patch("builtins.print") as logs:
+                    response = await self.post_events([
+                        fixtures.image_event(number=number)
+                    ])
+
+                self.assertEqual(response.status_code, 200)
+                self.module.find_similarity.assert_called_once_with(
+                    self.module.extract_text_from_image.return_value["text"]
+                )
+                self.assertIn(f"similarity={result[0]:.2f}%", str(logs.call_args_list))
+                self.assertIn(f"label={result[1]}", str(logs.call_args_list))
+
+        self.module.analyze_message.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_dataset_exception_keeps_next_text_working_without_secret_logs(self):
+        self.module.extract_text_from_image.return_value = {
+            "status": "ok", "text": "SECRET_LOOKUP_TEXT"
+        }
+        self.module.find_similarity.side_effect = RuntimeError("SECRET_DATASET_ERROR")
+
+        with patch("builtins.print") as logs:
+            response = await self.post_events([
+                fixtures.image_event(),
+                fixtures.text_event("ข้อความถัดไป", number=2),
+            ])
+
+        self.assertEqual(response.status_code, 200)
+        self.module.get_image_content.assert_called_once_with("1")
+        self.module.extract_text_from_image.assert_called_once_with(
+            b"offline-image", "image/jpeg"
+        )
+        self.module.find_similarity.assert_called_once_with("SECRET_LOOKUP_TEXT")
+        self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_called_once()
+        self.assertIn("[IMAGE MATCH ERROR]", str(logs.call_args_list))
+        self.assertIn("type=RuntimeError", str(logs.call_args_list))
+        self.assertNotIn("SECRET_LOOKUP_TEXT", str(logs.call_args_list))
+        self.assertNotIn("SECRET_DATASET_ERROR", str(logs.call_args_list))
 
 
 if __name__ == "__main__":

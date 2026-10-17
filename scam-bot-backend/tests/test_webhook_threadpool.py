@@ -30,6 +30,10 @@ def load_app():
         spec=lambda image_bytes, mime_type: None,
         return_value={"status": "ok", "text": "ข้อความจากรูปสำหรับทดสอบ"}
     )
+    detector.find_similarity = Mock(
+        spec=lambda text: None,
+        return_value=(87.5, "spam"),
+    )
     messaging = ModuleType("messaging")
     messaging.reply_to_line = Mock(return_value=True)
     messaging.get_image_content = Mock(return_value=(b"offline-image", "image/jpeg"))
