@@ -286,6 +286,22 @@ def analyze_with_llm(text: str, similarity_percent: float, matched_label: str | 
         ข้อความสำหรับประเมิน (JSON string):
         """ + json.dumps(text, ensure_ascii=False)
 
+        dataset_context = {
+            "similarity_percent": similarity_percent,
+            "matched_label": matched_label,
+        }
+
+        prompt = (
+            "ข้อมูลประกอบจาก dataset (JSON):\n"
+            + json.dumps(dataset_context, ensure_ascii=False)
+            + "\nคะแนนนี้คือความคล้าย ไม่ใช่โอกาสเป็นมิจฉาชีพ"
+            + "\nmatched_label เป็นประเภทของตัวอย่าง ไม่ใช่คำตัดสินข้อความนี้"
+            + "\nห้ามตัดสินจากคะแนนหรือ label เพียงอย่างเดียว"
+            + "\nการพบ ham หรือไม่พบตัวอย่าง ไม่ได้ยืนยันว่าปลอดภัย"
+            + "\n\n"
+            + prompt
+        )
+
     # 6.2 ลองโมเดลถัดไปเมื่อเรียก API ไม่สำเร็จ, JSON เสีย หรือฟิลด์ผิดรูปแบบ
     models_to_try = ["gemini-3.5-flash-lite", "gemini-3.6-flash"]
 

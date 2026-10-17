@@ -71,12 +71,70 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertIn('ไม่ตีความ "เริ่มงานได้ทันที" ว่าเร่งโอนเงิน', prompt)
         self.assertTrue(prompt.rstrip().endswith(json.dumps(text, ensure_ascii=False)))
 
+    def test_private_prompt_includes_dataset_metadata_without_another_lookup(self):
+        # ตรวจข้อมูลที่ส่งให้ SDK ไม่ใช่ความแม่นยำของ AI จริง
+        expected = result("uncertain")
+        text = 'SECRET_OCR_TEXT\n"โอนค่าธรรมเนียมก่อนรับรางวัล"'
+        generate = self.d.client.models.generate_content
+        prefix = "ข้อมูลประกอบจาก dataset (JSON):\n"
+
+        with patch.object(self.d, "find_similarity") as lookup:
+            for score, label in ((78.59, "spam"), (99.2, "ham"), (0.0, None)):
+                with self.subTest(score=score, label=label):
+                    generate.reset_mock()
+                    generate.return_value = SimpleNamespace(text=json.dumps(expected))
+
+                    actual = self.d.analyze_with_llm(text, score, label, private=True)
+
+                    self.assertEqual(actual, expected)
+                    generate.assert_called_once()
+                    prompt = generate.call_args.kwargs["contents"]
+                    self.assertTrue(prompt.startswith(prefix))
+                    context, _ = json.JSONDecoder().raw_decode(prompt[len(prefix):])
+                    self.assertEqual(context, {
+                        "similarity_percent": score, "matched_label": label,
+                    })
+                    self.assertIn("ความคล้าย ไม่ใช่โอกาสเป็นมิจฉาชีพ", prompt)
+                    self.assertIn("ประเภทของตัวอย่าง ไม่ใช่คำตัดสินข้อความนี้", prompt)
+                    self.assertIn("ห้ามตัดสินจากคะแนนหรือ label เพียงอย่างเดียว", prompt)
+                    self.assertIn("ham หรือไม่พบตัวอย่าง ไม่ได้ยืนยันว่าปลอดภัย", prompt)
+                    self.assertTrue(prompt.rstrip().endswith(
+                        json.dumps(text, ensure_ascii=False)
+                    ))
+
+            lookup.assert_not_called()
+
+    def test_private_failover_keeps_dataset_context_and_message_without_secret_logs(self):
+        expected = result("uncertain")
+        text = "SECRET_OCR_FAILOVER_TEXT"
+        generate = self.d.client.models.generate_content
+        generate.side_effect = [
+            SimpleNamespace(text="invalid JSON"),
+            SimpleNamespace(text=json.dumps(expected)),
+        ]
+
+        with patch("builtins.print") as logs:
+            actual = self.d.analyze_with_llm(text, 78.59, "spam", private=True)
+
+        self.assertEqual(actual, expected)
+        self.assertEqual(generate.call_count, 2)
+        prompts = [call.kwargs["contents"] for call in generate.call_args_list]
+        self.assertEqual(prompts[0], prompts[1])
+        context, _ = json.JSONDecoder().raw_decode(prompts[0].split("\n", 1)[1])
+        self.assertEqual(context, {
+            "similarity_percent": 78.59, "matched_label": "spam",
+        })
+        self.assertTrue(prompts[0].rstrip().endswith(json.dumps(text, ensure_ascii=False)))
+        self.assertNotIn(text, str(logs.call_args_list))
+
     def test_group_prompt_does_not_receive_private_classification_instructions(self):
         expected = {"is_scam": False, "risk_level": "low", "reason": "เหตุผลทดสอบ"}
         self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
         self.assertEqual(self.d.analyze_with_llm("นัดคุยงาน", 85, "ham"), expected)
         prompt = self.d.client.models.generate_content.call_args.kwargs["contents"]
         self.assertNotIn("ห้ามใช้ conversation", prompt)
+        self.assertNotIn("ข้อมูลประกอบจาก dataset", prompt)
+        self.assertNotIn('"matched_label"', prompt)
 
     def test_bad_status_and_contradiction_fail_closed(self):
         for bad in ({k: v for k, v in result("no_risk_found").items() if k != "status"},
