@@ -351,7 +351,8 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(stage=stage):
                 self.assertNotEqual(thread_id, request_thread)
         self.module.analyze_message.assert_not_called()
-        self.module.reply_to_line.assert_not_called()
+        self.module.reply_to_line.assert_called_once()
+        self.assertIn("พบสัญญาณเสี่ยง", self.module.reply_to_line.call_args.args[1])
         self.module.save_detection.assert_not_called()
         self.assertIn("status=ok", str(logs.call_args_list))
         self.assertIn("chars=15", str(logs.call_args_list))
@@ -518,7 +519,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_DATASET_ERROR", str(logs.call_args_list))
 
 
-    async def test_image_analysis_status_is_logged_without_reason_or_group_actions(self):
+    async def test_group_image_only_warns_for_risk_and_does_not_log_reason(self):
         statuses = ("risk_found", "no_risk_found", "uncertain", "error")
         for number, status in enumerate(statuses, start=1):
             with self.subTest(status=status):
@@ -544,7 +545,8 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("SECRET_IMAGE_REASON", str(logs.call_args_list))
 
         self.module.analyze_message.assert_not_called()
-        self.module.reply_to_line.assert_not_called()
+        self.module.reply_to_line.assert_called_once()
+        self.assertEqual(self.module.reply_to_line.call_args.args[0], "reply-1")
         self.module.save_detection.assert_not_called()
 
     async def test_image_analysis_exception_keeps_next_text_without_secret_logs(self):
@@ -569,6 +571,45 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("type=RuntimeError", str(logs.call_args_list))
         self.assertIn("status=error", str(logs.call_args_list))
         self.assertNotIn("SECRET_IMAGE_ANALYSIS_ERROR", str(logs.call_args_list))
+
+
+    async def test_group_and_room_without_readable_text_skip_lookup_analysis_and_reply(self):
+        number = 0
+        for source in ("group", "room"):
+            for status in ("uncertain", "error"):
+                number += 1
+                with self.subTest(source=source, status=status):
+                    self.module.extract_text_from_image.reset_mock()
+                    self.module.extract_text_from_image.return_value = {"status": status, "text": ""}
+                    event = fixtures.image_event(number)
+                    event["source"] = {"type": source, source + "Id": "offline-chat", "userId": "offline-user"}
+                    with patch("builtins.print") as logs:
+                        response = await self.post_events([event, event])
+                    self.assertEqual(response.status_code, 200)
+                    self.module.extract_text_from_image.assert_called_once()
+                    self.assertNotIn("[EVENT ERROR]", str(logs.call_args_list))
+        self.module.find_similarity.assert_not_called()
+        self.module.analyze_with_llm.assert_not_called()
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_room_image_warns_once_only_for_consistent_risk_result(self):
+        for number, flag in enumerate((True, False, None), start=1):
+            with self.subTest(is_scam=flag):
+                self.module.reply_to_line.reset_mock()
+                self.module.analyze_with_llm.return_value = {
+                    "status": "risk_found", "is_scam": flag,
+                    "risk_level": "high", "reason": "เหตุผลทดสอบ",
+                }
+                event = fixtures.image_event(number)
+                event["source"] = {"type": "room", "roomId": "offline-room", "userId": "offline-user"}
+                response = await self.post_events([event, event])
+                self.assertEqual(response.status_code, 200)
+                if flag is True:
+                    self.module.reply_to_line.assert_called_once()
+                    self.assertIn("พบสัญญาณเสี่ยง", self.module.reply_to_line.call_args.args[1])
+                else:
+                    self.module.reply_to_line.assert_not_called()
 
 
 if __name__ == "__main__":

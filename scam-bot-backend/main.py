@@ -224,6 +224,11 @@ async def process_text_event(event: MessageEvent | PostbackEvent):
     started = monotonic()
     event_id = getattr(event, 'webhook_event_id', None)
     event_ref = sha256(event_id.encode()).hexdigest()[:12] if isinstance(event_id, str) else '-'
+
+    if isinstance(event, MessageEvent):
+        source = event.source.type.upper()
+        print(f"==================== [NEW MESSAGE: {source}] ====================")
+    
     print(f"[EVENT] event={event_ref} processing")
     try:
         await _process_text_event(event)
@@ -244,6 +249,8 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
 
     if isinstance(event.message, ImageMessageContent):
         print(f"[MESSAGE] source={event.source.type} type=image")
+
+        image_result = {"status": "error", "is_scam": None}
 
         try:
             image_content = await run_in_threadpool(
@@ -281,6 +288,15 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                 f"[OCR] status={ocr_result['status']} "
                 f"chars={len(ocr_result['text'])}"
             )
+
+
+            if ocr_result["status"] == "uncertain":
+                image_result = {
+                    "status": "uncertain",
+                    "is_scam": False,
+                    "reason": "อ่านข้อความในรูปได้ไม่ชัดเจน หรือไม่พบข้อความให้ประเมิน",
+                }
+
 
             if ocr_result["status"] == "ok":
                 try:
@@ -326,10 +342,33 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                         )
                     
 
-        if event.source.type == "user":
-            await process_private_event(event)
+        should_reply = (
+            event.source.type == "user"
+            or (
+                event.source.type in {"group", "room"}
+                and image_result.get("status") == "risk_found"
+                and image_result.get("is_scam") is True
+            )
+        )
 
-        return  
+        if should_reply:
+            reply_msg = image_reply(image_result)
+            try:
+                sent = await run_in_threadpool(
+                    timed_call,
+                    "line_reply",
+                    reply_to_line,
+                    event.reply_token,
+                    reply_msg,
+                )
+                print(f"[IMAGE REPLY] sent={sent}")
+            except Exception as error:
+                print(
+                    f"[SEND ERROR] stage=image_reply "
+                    f"type={type(error).__name__}"
+                )
+
+        return
 
     # ไม่ส่งคำอธิบายส่วนตัวเข้า group/room; กลุ่มยังใช้ทางเดิมด้านล่าง
     if getattr(getattr(event, "source", None), "type", None) == "user":
@@ -338,8 +377,6 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
     user_text = event.message.text
     reply_token = event.reply_token
 
-    print("==================== [NEW GROUP Message] ====================")
-    print(f"[MESSAGE] source=group_or_room chars={len(user_text)}")
 
     # ให้ thread pool รอ AI/ฐานข้อมูล เพื่อไม่บล็อกการรับคำขออื่น
     # await ยังรอผลของข้อความนี้ก่อนสร้างคำเตือน ไม่ได้ปล่อยงานทิ้งไว้เบื้องหลัง
@@ -431,9 +468,40 @@ def private_reply(result: dict, text: str) -> str:
     return PRIVATE_ERROR
 
 
+
+def image_reply(result: dict) -> str:
+    """สร้างคำตอบสำหรับข้อความในรูป โดยยังไม่ส่ง LINE."""
+    status = result.get("status")
+
+    if status in {"risk_found", "no_risk_found"}:
+        return (
+            "🔎 ผลประเมินจากข้อความที่อ่านได้ในรูป\n\n"
+            + private_reply(result, "")
+        )
+
+    if status == "uncertain" and result.get("is_scam") is False:
+        reason = result.get("reason", "ข้อมูลในรูปยังไม่เพียงพอ")
+        return (
+            f"🟡 ยังประเมินข้อความในรูปได้ไม่ชัดเจน\n{reason}\n\n"
+            "ลองส่งรูปที่ข้อความชัดขึ้น หรือพิมพ์ข้อความพร้อมบริบทเพิ่มเติม "
+            "โดยปิดบังข้อมูลส่วนตัว และไม่ส่ง OTP หรือรหัสผ่าน"
+        )
+
+    if status == "conversation":
+        return (
+            "อ่านข้อความในรูปแล้ว แต่ยังไม่มีรายละเอียดเพียงพอสำหรับประเมินความเสี่ยง\n"
+            "กรุณาบอกว่าต้องการให้ช่วยตรวจส่วนไหน พร้อมบริบทเพิ่มเติมครับ"
+        )
+
+    return (
+        "⚠️ ระบบประเมินรูปนี้ไม่สำเร็จ จึงยังให้ผลประเมินไม่ได้\n"
+        "กรุณาลองส่งใหม่ภายหลัง หรือคัดลอกข้อความในรูปมาส่งครับ"
+    )
+
+
+
 async def process_private_event(event: MessageEvent):
     """ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม."""
-    print("==================== [NEW MESSAGE: PRIVATE] ====================")
     case_id = None
     result = None
     if not isinstance(event.message, TextMessageContent):

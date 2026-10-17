@@ -213,14 +213,93 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ตรวจข้อความนี้ไม่สำเร็จ", self.module.reply_to_line.call_args_list[0].args[1])
         self.assertNotIn("SECRET", str(logs.call_args_list))
 
-    async def test_private_image_replies_once_without_analysis(self):
+    async def test_private_image_replies_once_with_analysis_without_history(self):
         event = private_event()
         event["message"] = {"type": "image", "id": "1", "contentProvider": {"type": "line"}, "quoteToken": "offline"}
         response = await self.post_events([event, event])
         self.assertEqual(response.status_code, 200)
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_called_once()
-        self.assertIn("ยังตรวจรูปภาพ", self.module.reply_to_line.call_args.args[1])
+        self.module.analyze_with_llm.assert_called_once()
+        reply = self.module.reply_to_line.call_args.args[1]
+        self.assertIn("ข้อความที่อ่านได้ในรูป", reply)
+        self.assertIn("ยังไม่พบสัญญาณหลอกลวงชัดเจน", reply)
+        self.assertIn("ไม่รับรองว่าปลอดภัย", reply)
+        self.module.save_detection.assert_not_called()
+
+    async def test_private_image_returns_each_analysis_status(self):
+        cases = (
+            ("risk_found", "พบสัญญาณเสี่ยง"),
+            ("no_risk_found", "ยังไม่พบสัญญาณหลอกลวงชัดเจน"),
+            ("uncertain", "ยังประเมินข้อความในรูปได้ไม่ชัดเจน"),
+            ("conversation", "ต้องการให้ช่วยตรวจส่วนไหน"),
+        )
+        for number, (status, expected) in enumerate(cases, start=1):
+            with self.subTest(status=status):
+                self.module.reply_to_line.reset_mock()
+                event = fixtures.image_event(number)
+                event["source"] = {"type": "user", "userId": "offline-user"}
+                with patch.object(self.module, "analyze_with_llm", return_value=result(status)) as analyze:
+                    response = await self.post_events([event, event])
+                self.assertEqual(response.status_code, 200)
+                analyze.assert_called_once_with(
+                    self.module.extract_text_from_image.return_value["text"],
+                    87.5, "spam", private=True,
+                )
+                self.module.reply_to_line.assert_called_once()
+                token, reply = self.module.reply_to_line.call_args.args
+                self.assertEqual(token, event["replyToken"])
+                self.assertIn(expected, reply)
+                self.assertNotIn("ยังตรวจรูปภาพ", reply)
+        self.module.analyze_message.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_private_image_failures_reply_once_with_retry_or_clarity_request(self):
+        cases = (
+            ("get_image_content", None),
+            ("get_image_content", RuntimeError("SECRET_DOWNLOAD")),
+            ("extract_text_from_image", {"status": "uncertain", "text": ""}),
+            ("extract_text_from_image", {"status": "error", "text": ""}),
+            ("extract_text_from_image", RuntimeError("SECRET_OCR")),
+            ("find_similarity", RuntimeError("SECRET_DATASET")),
+            ("analyze_with_llm", {"status": "error", "is_scam": None}),
+            ("analyze_with_llm", RuntimeError("SECRET_ANALYSIS")),
+        )
+        for number, (stage, failure) in enumerate(cases, start=1):
+            with self.subTest(stage=stage, failure=failure):
+                self.module.reply_to_line.reset_mock()
+                event = fixtures.image_event(number)
+                event["source"] = {"type": "user", "userId": "offline-user"}
+                options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
+                with patch.object(self.module, stage, **options), patch("builtins.print") as logs:
+                    response = await self.post_events([event, event])
+                self.assertEqual(response.status_code, 200)
+                self.module.reply_to_line.assert_called_once()
+                reply = self.module.reply_to_line.call_args.args[1]
+                if isinstance(failure, dict) and failure.get("status") == "uncertain":
+                    self.assertIn("รูปที่ข้อความชัดขึ้น", reply)
+                else:
+                    self.assertIn("ยังให้ผลประเมินไม่ได้", reply)
+                self.assertNotIn("SECRET", reply)
+                self.assertNotIn("SECRET", str(logs.call_args_list))
+        self.module.analyze_message.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    async def test_failed_image_send_does_not_retry_or_stop_next_text(self):
+        for number, failure in enumerate((False, RuntimeError("SECRET_SEND")), start=1):
+            with self.subTest(failure=failure):
+                self.module.analyze_message.reset_mock()
+                event = fixtures.image_event(number * 2)
+                event["source"] = {"type": "user", "userId": "offline-user"}
+                events = [event, private_event("ข้อความถัดไป", number * 2 + 1)]
+                with patch.object(self.module, "reply_to_line", side_effect=[failure, True]) as reply, patch("builtins.print") as logs:
+                    first = await self.post_events(events)
+                    duplicate = await self.post_events(events)
+                self.assertEqual((first.status_code, duplicate.status_code), (200, 200))
+                self.assertEqual(reply.call_count, 2)
+                self.assertEqual([call.args[0] for call in reply.call_args_list], [item["replyToken"] for item in events])
+                self.module.analyze_message.assert_called_once_with("ข้อความถัดไป", private=True)
+                self.assertNotIn("SECRET_SEND", str(logs.call_args_list))
 
     async def test_private_image_requires_identity_before_work(self):
         event = private_event()
@@ -257,6 +336,50 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         response = await self.post_events([private_event(number=1), private_event(number=2)])
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.module.reply_to_line.call_count, 2)
+
+
+class ImageReplyTests(unittest.TestCase):
+    def setUp(self):
+        self.module = fixtures.load_app()
+
+    def test_assessed_image_preserves_reason_and_limits(self):
+        for status, heading in (
+            ("risk_found", "พบสัญญาณเสี่ยง"),
+            ("no_risk_found", "ยังไม่พบสัญญาณหลอกลวงชัดเจน"),
+        ):
+            with self.subTest(status=status):
+                reply = self.module.image_reply(result(status))
+                self.assertIn("ข้อความที่อ่านได้ในรูป", reply)
+                self.assertIn(heading, reply)
+                self.assertIn("เหตุผลทดสอบ", reply)
+                if status == "no_risk_found":
+                    self.assertIn("ไม่รับรองว่าปลอดภัย", reply)
+                else:
+                    self.assertIn("ไม่ใช่การยืนยันตัวตน", reply)
+        self.module.reply_to_line.assert_not_called()
+        self.module.save_detection.assert_not_called()
+
+    def test_incomplete_image_results_request_context_or_retry(self):
+        reply = self.module.image_reply(result("uncertain"))
+        self.assertIn("เหตุผลทดสอบ", reply)
+        self.assertIn("รูปที่ข้อความชัดขึ้น", reply)
+        self.assertIn("ไม่ส่ง OTP หรือรหัสผ่าน", reply)
+        reply = self.module.image_reply(result("conversation"))
+        self.assertIn("ต้องการให้ช่วยตรวจส่วนไหน", reply)
+        self.assertNotEqual(reply, self.module.PRIVATE_HELP)
+        for value in ({"status": "error", "is_scam": None}, {}, {"status": "unknown"}):
+            with self.subTest(value=value):
+                reply = self.module.image_reply(value)
+                self.assertIn("ยังให้ผลประเมินไม่ได้", reply)
+                self.assertIn("ส่งใหม่", reply)
+
+    def test_contradictory_results_do_not_produce_risk_or_clear_verdict(self):
+        for status, flag in (("risk_found", False), ("no_risk_found", True), ("uncertain", True)):
+            with self.subTest(status=status, flag=flag):
+                reply = self.module.image_reply({**result(status), "is_scam": flag})
+                self.assertIn("ยังให้ผลประเมินไม่ได้", reply)
+                self.assertNotIn("⚠️ พบสัญญาณเสี่ยง", reply)
+                self.assertNotIn("✅ ยังไม่พบสัญญาณ", reply)
 
 
 if __name__ == "__main__":
