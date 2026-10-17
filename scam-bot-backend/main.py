@@ -333,7 +333,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                         image_result = {
                             "status": "error",
                             "is_scam": None,
-                            "error_stage": "image_analysis",
+                            "error_stage": "analysis",
                         }
 
                     print(
@@ -351,6 +351,8 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
             )
         )
 
+        sent = None
+
         if should_reply:
             reply_msg = image_reply(image_result)
             try:
@@ -367,6 +369,17 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                     f"[SEND ERROR] stage=image_reply "
                     f"type={type(error).__name__}"
                 )
+                sent = False
+
+        await run_in_threadpool(
+            timed_call,
+            "history",
+            save_detection,
+            event,
+            image_result,
+            warning_attempted=should_reply,
+            warning_sent=sent,
+        )
 
         return
 

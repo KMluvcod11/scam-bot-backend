@@ -149,7 +149,11 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None)
             "last_seen_at": datetime.now(timezone.utc).isoformat(),
         }, on_conflict="line_source_id").execute()
         source_id = source_response.data[0]["id"]
-        text = event.message.text
+        if getattr(event.message, "type", None) == "image":
+            text = "[รูปภาพ]"
+        else:
+            text = event.message.text
+            
         status = _status(result, text, kind)
         sender_user_id = getattr(event.source, "user_id", None)
         sender_display_name = (get_sender_display_name(kind, line_source_id, sender_user_id)

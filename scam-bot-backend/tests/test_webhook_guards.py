@@ -224,7 +224,10 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
 
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_not_called()
+        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+            "warning_attempted": False, "warning_sent": None,
+        })
 
     async def test_group_image_rejects_invalid_identity_before_work(self):
         for field in ("id","webhookEventId", "replyToken"):
@@ -267,7 +270,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(download_threads[0], request_thread)
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_not_called()
+        self.module.save_detection.assert_called_once()
 
     async def test_failed_image_download_keeps_next_text_working(self):
         self.module.get_image_content.return_value = None
@@ -281,7 +284,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.get_image_content.assert_called_once_with("1")
         self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_count, 2)
 
     async def test_image_download_exception_keeps_next_text_working(self):
         self.module.get_image_content.side_effect = RuntimeError(
@@ -298,7 +301,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.get_image_content.assert_called_once_with("1")
         self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_count, 2)
         self.assertNotIn("SECRET_IMAGE", str(logs.call_args_list))
 
 
@@ -326,10 +329,20 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 "risk_level": "high", "reason": "SECRET_IMAGE_REASON",
             }
 
+        def reply_image(token, message):
+            stages.append(("reply", threading.get_ident()))
+            return True
+
+        def save_image(event, result, *, warning_attempted, warning_sent):
+            stages.append(("history", threading.get_ident()))
+            return True
+
         self.module.get_image_content.side_effect = download
         self.module.extract_text_from_image.side_effect = read_image
         self.module.find_similarity.side_effect = match_dataset
         self.module.analyze_with_llm.side_effect = analyze_image
+        self.module.reply_to_line.side_effect = reply_image
+        self.module.save_detection.side_effect = save_image
         event = fixtures.image_event()
 
         with patch("builtins.print") as logs:
@@ -345,7 +358,8 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             "SECRET_OCR_TEXT", 87.5, "spam", private=True
         )
         self.assertEqual(
-            [stage for stage, _ in stages], ["download", "ocr", "dataset", "analysis"]
+            [stage for stage, _ in stages],
+            ["download", "ocr", "dataset", "analysis", "reply", "history"],
         )
         for stage, thread_id in stages:
             with self.subTest(stage=stage):
@@ -353,7 +367,10 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_called_once()
         self.assertIn("พบสัญญาณเสี่ยง", self.module.reply_to_line.call_args.args[1])
-        self.module.save_detection.assert_not_called()
+        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+            "warning_attempted": True, "warning_sent": True,
+        })
         self.assertIn("status=ok", str(logs.call_args_list))
         self.assertIn("chars=15", str(logs.call_args_list))
         self.assertIn("similarity=87.50%", str(logs.call_args_list))
@@ -387,7 +404,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
 
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_not_called()
+        self.assertEqual(self.module.save_detection.call_count, len(failures))
 
     async def test_uncertain_or_failed_ocr_is_not_treated_as_a_risk_assessment(self):
         for number, status in enumerate(("uncertain", "error"), start=1):
@@ -414,7 +431,11 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
 
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_not_called()
+        self.assertEqual(self.module.save_detection.call_count, 2)
+        self.assertEqual(
+            [call.args[1]["status"] for call in self.module.save_detection.call_args_list],
+            ["uncertain", "error"],
+        )
 
     async def test_ocr_exception_keeps_next_text_working_without_secret_logs(self):
         self.module.extract_text_from_image.side_effect = RuntimeError(
@@ -434,14 +455,14 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_count, 2)
         self.assertIn("status=error", str(logs.call_args_list))
         self.assertIn("chars=0", str(logs.call_args_list))
         self.assertNotIn("SECRET_OCR_ERROR", str(logs.call_args_list))
         self.module.find_similarity.assert_not_called()
         self.module.analyze_with_llm.assert_not_called()
 
-    async def test_private_image_runs_analysis_once_and_replies_once_without_history(self):
+    async def test_private_image_runs_analysis_reply_and_history_once(self):
         event = fixtures.image_event()
         event["source"] = {"type": "user", "userId": "U-private"}
 
@@ -460,7 +481,10 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.module.reply_to_line.assert_called_once()
         self.module.analyze_message.assert_not_called()
-        self.module.save_detection.assert_not_called()
+        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+            "warning_attempted": True, "warning_sent": True,
+        })
 
 
     async def test_image_miss_ham_or_high_spam_match_still_gets_context_analysis(self):
@@ -489,7 +513,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
 
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_not_called()
+        self.assertEqual(self.module.save_detection.call_count, len(matches))
 
     async def test_dataset_exception_keeps_next_text_working_without_secret_logs(self):
         self.module.extract_text_from_image.return_value = {
@@ -512,7 +536,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_with_llm.assert_not_called()
         self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_count, 2)
         self.assertIn("[IMAGE MATCH ERROR]", str(logs.call_args_list))
         self.assertIn("type=RuntimeError", str(logs.call_args_list))
         self.assertNotIn("SECRET_LOOKUP_TEXT", str(logs.call_args_list))
@@ -547,7 +571,13 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_called_once()
         self.assertEqual(self.module.reply_to_line.call_args.args[0], "reply-1")
-        self.module.save_detection.assert_not_called()
+        self.assertEqual(self.module.save_detection.call_count, len(statuses))
+        for status, call in zip(statuses, self.module.save_detection.call_args_list):
+            attempted = status == "risk_found"
+            self.assertEqual(call.kwargs, {
+                "warning_attempted": attempted,
+                "warning_sent": True if attempted else None,
+            })
 
     async def test_image_analysis_exception_keeps_next_text_without_secret_logs(self):
         self.module.analyze_with_llm.side_effect = RuntimeError("SECRET_IMAGE_ANALYSIS_ERROR")
@@ -566,7 +596,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_count, 2)
         self.assertIn("[IMAGE ANALYSIS ERROR]", str(logs.call_args_list))
         self.assertIn("type=RuntimeError", str(logs.call_args_list))
         self.assertIn("status=error", str(logs.call_args_list))
@@ -591,7 +621,11 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.find_similarity.assert_not_called()
         self.module.analyze_with_llm.assert_not_called()
         self.module.reply_to_line.assert_not_called()
-        self.module.save_detection.assert_not_called()
+        self.assertEqual(self.module.save_detection.call_count, 4)
+        for call in self.module.save_detection.call_args_list:
+            self.assertEqual(call.kwargs, {
+                "warning_attempted": False, "warning_sent": None,
+            })
 
     async def test_room_image_warns_once_only_for_consistent_risk_result(self):
         for number, flag in enumerate((True, False, None), start=1):
@@ -610,6 +644,29 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("พบสัญญาณเสี่ยง", self.module.reply_to_line.call_args.args[1])
                 else:
                     self.module.reply_to_line.assert_not_called()
+
+
+    async def test_image_history_failure_keeps_next_event_and_does_not_resend(self):
+        for number, failure in enumerate((False, RuntimeError("SECRET_HISTORY_ERROR")), start=1):
+            with self.subTest(failure=failure):
+                self.module.analyze_with_llm.reset_mock()
+                self.module.analyze_message.reset_mock()
+                self.module.reply_to_line.reset_mock()
+                event = fixtures.image_event(number * 2)
+                event["source"] = {"type": "user", "userId": "offline-user"}
+                events = [event, fixtures.text_event("ข้อความถัดไป", number * 2 + 1)]
+                with patch.object(self.module, "save_detection", side_effect=[failure, True]) as history, patch("builtins.print") as logs:
+                    first = await self.post_events(events)
+                    duplicate = await self.post_events(events)
+                self.assertEqual((first.status_code, duplicate.status_code), (200, 200))
+                self.assertEqual(history.call_count, 2)
+                self.module.reply_to_line.assert_called_once()
+                self.module.analyze_with_llm.assert_called_once()
+                self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
+                self.assertEqual(history.call_args_list[0].kwargs, {
+                    "warning_attempted": True, "warning_sent": True,
+                })
+                self.assertNotIn("SECRET_HISTORY_ERROR", str(logs.call_args_list))
 
 
 if __name__ == "__main__":

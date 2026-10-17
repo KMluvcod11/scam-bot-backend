@@ -213,7 +213,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ตรวจข้อความนี้ไม่สำเร็จ", self.module.reply_to_line.call_args_list[0].args[1])
         self.assertNotIn("SECRET", str(logs.call_args_list))
 
-    async def test_private_image_replies_once_with_analysis_without_history(self):
+    async def test_private_image_replies_and_saves_analysis_once(self):
         event = private_event()
         event["message"] = {"type": "image", "id": "1", "contentProvider": {"type": "line"}, "quoteToken": "offline"}
         response = await self.post_events([event, event])
@@ -225,7 +225,10 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ข้อความที่อ่านได้ในรูป", reply)
         self.assertIn("ยังไม่พบสัญญาณหลอกลวงชัดเจน", reply)
         self.assertIn("ไม่รับรองว่าปลอดภัย", reply)
-        self.module.save_detection.assert_not_called()
+        self.module.save_detection.assert_called_once()
+        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+            "warning_attempted": True, "warning_sent": True,
+        })
 
     async def test_private_image_returns_each_analysis_status(self):
         cases = (
@@ -237,6 +240,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         for number, (status, expected) in enumerate(cases, start=1):
             with self.subTest(status=status):
                 self.module.reply_to_line.reset_mock()
+                self.module.save_detection.reset_mock()
                 event = fixtures.image_event(number)
                 event["source"] = {"type": "user", "userId": "offline-user"}
                 with patch.object(self.module, "analyze_with_llm", return_value=result(status)) as analyze:
@@ -251,8 +255,12 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(token, event["replyToken"])
                 self.assertIn(expected, reply)
                 self.assertNotIn("ยังตรวจรูปภาพ", reply)
+                self.module.save_detection.assert_called_once()
+                self.assertEqual(self.module.save_detection.call_args.args[1]["status"], status)
+                self.assertEqual(self.module.save_detection.call_args.kwargs, {
+                    "warning_attempted": True, "warning_sent": True,
+                })
         self.module.analyze_message.assert_not_called()
-        self.module.save_detection.assert_not_called()
 
     async def test_private_image_failures_reply_once_with_retry_or_clarity_request(self):
         cases = (
@@ -268,6 +276,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         for number, (stage, failure) in enumerate(cases, start=1):
             with self.subTest(stage=stage, failure=failure):
                 self.module.reply_to_line.reset_mock()
+                self.module.save_detection.reset_mock()
                 event = fixtures.image_event(number)
                 event["source"] = {"type": "user", "userId": "offline-user"}
                 options = {"side_effect": failure} if isinstance(failure, Exception) else {"return_value": failure}
@@ -282,13 +291,20 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                     self.assertIn("ยังให้ผลประเมินไม่ได้", reply)
                 self.assertNotIn("SECRET", reply)
                 self.assertNotIn("SECRET", str(logs.call_args_list))
+                self.module.save_detection.assert_called_once()
+                saved_result = self.module.save_detection.call_args.args[1]
+                self.assertEqual(saved_result["status"],
+                                 "uncertain" if isinstance(failure, dict) and failure.get("status") == "uncertain" else "error")
+                self.assertEqual(self.module.save_detection.call_args.kwargs, {
+                    "warning_attempted": True, "warning_sent": True,
+                })
         self.module.analyze_message.assert_not_called()
-        self.module.save_detection.assert_not_called()
 
     async def test_failed_image_send_does_not_retry_or_stop_next_text(self):
         for number, failure in enumerate((False, RuntimeError("SECRET_SEND")), start=1):
             with self.subTest(failure=failure):
                 self.module.analyze_message.reset_mock()
+                self.module.save_detection.reset_mock()
                 event = fixtures.image_event(number * 2)
                 event["source"] = {"type": "user", "userId": "offline-user"}
                 events = [event, private_event("ข้อความถัดไป", number * 2 + 1)]
@@ -300,6 +316,10 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([call.args[0] for call in reply.call_args_list], [item["replyToken"] for item in events])
                 self.module.analyze_message.assert_called_once_with("ข้อความถัดไป", private=True)
                 self.assertNotIn("SECRET_SEND", str(logs.call_args_list))
+                self.assertEqual(self.module.save_detection.call_count, 2)
+                self.assertEqual(self.module.save_detection.call_args_list[0].kwargs, {
+                    "warning_attempted": True, "warning_sent": False,
+                })
 
     async def test_private_image_requires_identity_before_work(self):
         event = private_event()

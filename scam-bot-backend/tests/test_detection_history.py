@@ -55,6 +55,8 @@ class HistoryTests(unittest.TestCase):
         row = self.log_table.upsert.call_args.args[0]
         self.assertEqual(row["line_event_id"], "line-event-1")
         self.assertEqual(row["source_id"], "source-uuid")
+        self.assertEqual(row["message_text"], self.event.message.text)
+        self.assertEqual(row["message_preview"], self.event.message.text[:160])
         self.assertEqual(row["detection_status"], "risk_found")
         self.assertTrue(row["warning_sent"])
         self.assertEqual(self.log_table.upsert.call_args.kwargs,
@@ -89,6 +91,60 @@ class HistoryTests(unittest.TestCase):
         row = self.log_table.upsert.call_args.args[0]
         self.assertEqual(row["sender_user_id"], "U123456")
         self.assertEqual(row["sender_display_name"], "ผู้ทดสอบ")
+
+
+    def test_image_without_text_saves_marker_and_assessment_without_raw_content(self):
+        self.event.message = SimpleNamespace(type="image", id="SECRET_IMAGE_ID")
+        result = {
+            "status": "risk_found", "is_scam": True, "risk_level": "high",
+            "reason": "พบการขอให้โอนเงินก่อนรับรางวัล",
+            "ocr_text": "SECRET_OCR_TEXT", "image_bytes": b"SECRET_IMAGE_BYTES",
+        }
+
+        self.assertTrue(self.history.save_detection(
+            self.event, result, warning_attempted=True, warning_sent=True,
+        ))
+
+        row = self.log_table.upsert.call_args.args[0]
+        self.assertEqual(row["message_text"], "[รูปภาพ]")
+        self.assertEqual(row["message_preview"], "[รูปภาพ]")
+        self.assertEqual(row["line_event_id"], self.event.webhook_event_id)
+        self.assertEqual(row["source_type"], "group")
+        self.assertEqual(row["received_at"], "2023-11-14T22:13:20+00:00")
+        self.assertEqual(row["detection_status"], "risk_found")
+        self.assertEqual(row["risk_level"], "high")
+        self.assertEqual(row["reason"], result["reason"])
+        self.assertNotIn("SECRET", repr(row))
+        self.assertEqual(self.log_table.upsert.call_args.kwargs, {
+            "on_conflict": "line_event_id", "ignore_duplicates": True,
+        })
+
+    def test_image_status_and_reply_outcomes_preserve_history_constraints(self):
+        self.event.message = SimpleNamespace(type="image", id="offline-image")
+        cases = (
+            ("risk_found", True, True, True),
+            ("no_risk_found", False, True, True),
+            ("uncertain", False, False, None),
+            ("error", None, False, None),
+            ("risk_found", True, True, False),
+        )
+        for status, flag, attempted, sent in cases:
+            with self.subTest(status=status, attempted=attempted, sent=sent):
+                result = {
+                    "status": status, "is_scam": flag,
+                    "error_stage": "analysis" if status == "error" else None,
+                }
+                self.assertTrue(self.history.save_detection(
+                    self.event, result,
+                    warning_attempted=attempted, warning_sent=sent,
+                ))
+                row = self.log_table.upsert.call_args.args[0]
+                self.assertEqual(row["detection_status"], status)
+                self.assertIs(row["is_scam"], flag)
+                self.assertIs(row["warning_attempted"], attempted)
+                self.assertIs(row["warning_sent"], sent)
+                self.assertEqual(row["error_stage"], result["error_stage"])
+                self.assertEqual(row["message_text"], "[รูปภาพ]")
 
 
 if __name__ == "__main__":
