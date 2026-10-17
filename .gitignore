@@ -19,3 +19,4 @@ Thumbs.db
 # Executables & Tools
 ngrok.exe
 *.exe
+scam-bot-backend/rich_menu/deployment.local.*

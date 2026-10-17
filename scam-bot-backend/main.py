@@ -236,7 +236,10 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
     """วิเคราะห์และตอบหนึ่ง event; แยกไว้เพื่อให้ Webhook จัดการการกันซ้ำได้ชัดเจน."""
     if isinstance(event, PostbackEvent):
         if event.source.type == "user":
-            await process_learning_event(event)
+            if event.postback.data == "menu:check":
+                await process_menu_check(event)
+            else:
+                await process_learning_event(event)
         return
 
     if isinstance(event.message, ImageMessageContent):
@@ -440,6 +443,24 @@ async def process_private_event(event: MessageEvent):
     if result is not None:
         await run_in_threadpool(timed_call, "history", save_detection, event, result,
                                 warning_attempted=True, warning_sent=sent)
+
+
+async def process_menu_check(event: PostbackEvent):
+    """ปุ่มเริ่มตรวจแสดงวิธีส่งข้อความ ไม่สร้างผลตรวจหรือเรียก AI."""
+    instructions = (
+        "🔎 เริ่มตรวจข้อความกับ Eh?Bot\n\n"
+        "1. คัดลอกข้อความที่สงสัย\n"
+        "2. วางและส่งในแชตนี้ พร้อมบริบทที่เกี่ยวข้อง\n"
+        "3. อ่านผลตรวจ แล้วกด ‘เรียนรู้จากเคสนี้’ หากมีปุ่มใต้ผล\n\n"
+        "ปิดบังเลขบัญชี เลขบัตรประชาชน และข้อมูลส่วนตัวก่อนส่ง "
+        "อย่าส่งรหัสผ่านหรือ OTP\n"
+        "หากมีลิงก์ ส่งข้อความที่มาด้วย บอตยังไม่ได้เปิดตรวจเว็บไซต์ปลายทาง"
+    )
+    try:
+        sent = await run_in_threadpool(reply_to_line, event.reply_token, instructions)
+        print(f"[RICH MENU] instructions_sent={str(sent).lower()}")
+    except Exception as error:
+        print(f"[SEND ERROR] stage=rich_menu type={type(error).__name__}")
 
 
 async def process_learning_event(event: PostbackEvent):
