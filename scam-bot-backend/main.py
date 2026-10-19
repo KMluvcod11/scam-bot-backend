@@ -1,6 +1,7 @@
 """จุดเริ่มต้น FastAPI: ตรวจลายเซ็น รับข้อความ วิเคราะห์ และตอบ LINE."""
 # 1. นำเข้าเครื่องมือ: FastAPI รับ HTTP; โมดูลของเราใช้วิเคราะห์และตอบ LINE
 import json
+import os
 import re
 from uuid import uuid4
 from hashlib import sha256
@@ -299,6 +300,9 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
 
 
             if ocr_result["status"] == "ok":
+                # เปิดเฉพาะตอนทดสอบในเครื่อง เพราะข้อความอาจมีข้อมูลส่วนตัว
+                if os.getenv("DEBUG_OCR_TEXT") == "1":
+                    print("[OCR DEBUG] text=" + json.dumps(ocr_result["text"], ensure_ascii=False))
                 try:
                     similarity, matched_label = await run_in_threadpool(
                         find_similarity,

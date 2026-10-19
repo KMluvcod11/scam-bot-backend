@@ -1,5 +1,6 @@
 """ตรวจส่วนตัวด้วย client จำลอง: ไม่อ่านคีย์ ไม่ใช้โควตา และไม่ส่ง LINE จริง."""
 import json
+import os
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -70,6 +71,28 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertIn("มีการขอค่าธรรมเนียมก่อนรับรางวัลและกำหนดเวลาเร่งให้โอน", prompt)
         self.assertIn('ไม่ตีความ "เริ่มงานได้ทันที" ว่าเร่งโอนเงิน', prompt)
         self.assertTrue(prompt.rstrip().endswith(json.dumps(text, ensure_ascii=False)))
+
+    def test_group_prompt_distinguishes_normal_sales_from_combined_risk(self):
+        # ตรวจคำสั่งที่ส่งให้ SDK ไม่ใช่ผลตัดสินของ AI จริง
+        expected = result("risk_found")
+        self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
+        text = "เสื้อตัวสุดท้าย โอนมัดจำ 300 บาทภายใน 10 นาที ทักนอกแอป ไม่รับชำระผ่านระบบ"
+        self.d.analyze_with_llm(text, 85, "spam")
+        prompt = self.d.client.models.generate_content.call_args.kwargs["contents"]
+        self.assertIn("ซื้อขายตามปกติ", prompt)
+        self.assertIn("เร่งโอนมัดจำ พร้อมชวนคุยนอกแอปและไม่รับชำระผ่านระบบ", prompt)
+        self.assertIn('ไม่ใช่เพียงคำว่า "ซื้อขาย" หรือ "มัดจำ"', prompt)
+        self.assertIn("แยกคำเตือนภัยหรือการยกตัวอย่าง", prompt)
+        self.assertIn("ไม่ฟันธงว่ารางวัลปลอมหรือเว็บฟิชชิง", prompt)
+
+    def test_image_and_private_prompt_do_not_invent_reward_evidence(self):
+        expected = result("uncertain")
+        self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
+        self.d.analyze_with_llm("แจกเงิน https://example.invalid", 85, "spam", private=True)
+        prompt = self.d.client.models.generate_content.call_args.kwargs["contents"]
+        self.assertIn("ไม่ใช่หลักฐานยืนยันว่ารางวัลปลอมหรือเว็บฟิชชิง", prompt)
+        self.assertIn("ห้ามเติมการขอข้อมูลหรือโอนเงินที่ไม่มีในข้อความ", prompt)
+        self.assertIn("OCR อาจอ่านคลาดเคลื่อน", prompt)
 
     def test_private_prompt_includes_dataset_metadata_without_another_lookup(self):
         # ตรวจข้อมูลที่ส่งให้ SDK ไม่ใช่ความแม่นยำของ AI จริง
@@ -168,6 +191,27 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncSetUp = fixtures.WebhookThreadpoolTests.asyncSetUp
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
+
+    async def test_ocr_debug_requires_explicit_opt_in_and_preserves_analysis_input(self):
+        text = 'ข้อความทดสอบส่วนตัว\n"ลิงก์จากการ์ดพรีวิว"'
+        self.module.extract_text_from_image.return_value = {"status": "ok", "text": text}
+        for number, flag in enumerate((None, "0", "true", "1"), 1):
+            with self.subTest(flag=flag), patch.dict(os.environ), patch("builtins.print") as logs:
+                os.environ.pop("DEBUG_OCR_TEXT", None)
+                if flag is not None:
+                    os.environ["DEBUG_OCR_TEXT"] = flag
+                event = fixtures.image_event(number)
+                event["source"] = {"type": "user", "userId": "offline-user"}
+                response = await self.post_events([event])
+                self.assertEqual(response.status_code, 200)
+                debug_lines = [str(arg) for call in logs.call_args_list for arg in call.args
+                               if "[OCR DEBUG]" in str(arg)]
+                if flag == "1":
+                    self.assertEqual(debug_lines, ["[OCR DEBUG] text=" + json.dumps(text, ensure_ascii=False)])
+                else:
+                    self.assertEqual(debug_lines, [])
+                    self.assertNotIn("ข้อความทดสอบส่วนตัว", str(logs.call_args_list))
+                self.module.analyze_with_llm.assert_called_with(text, 87.5, "spam", private=True)
 
     async def test_private_log_contains_metadata_not_message(self):
         text = "สวัสดีครับ\nข้อความทดสอบ"
