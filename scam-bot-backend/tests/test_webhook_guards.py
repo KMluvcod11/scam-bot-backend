@@ -326,9 +326,9 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
 
         def match_dataset(text):
             stages.append(("dataset", threading.get_ident()))
-            return 87.5, "spam"
+            return 87.5, "spam", "SECRET_DATASET_EXAMPLE"
 
-        def analyze_image(text, similarity_percent, matched_label, *, private):
+        def analyze_image(text, similarity_percent, matched_label, *, matched_text, private):
             stages.append(("analysis", threading.get_ident()))
             return {
                 "status": "risk_found", "is_scam": True,
@@ -361,7 +361,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.module.find_similarity.assert_called_once_with("SECRET_OCR_TEXT")
         self.module.analyze_with_llm.assert_called_once_with(
-            "SECRET_OCR_TEXT", 87.5, "spam", private=True
+            "SECRET_OCR_TEXT", 87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True
         )
         self.assertEqual(
             [stage for stage, _ in stages],
@@ -387,6 +387,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_IMAGE_DATA", str(logs.call_args_list))
         self.assertNotIn("SECRET_OCR_TEXT", str(logs.call_args_list))
         self.assertNotIn("SECRET_IMAGE_REASON", str(logs.call_args_list))
+        self.assertNotIn("SECRET_DATASET_EXAMPLE", str(logs.call_args_list))
 
     async def test_failed_download_does_not_call_ocr(self):
         failures = (None, RuntimeError("SECRET_DOWNLOAD"))
@@ -483,7 +484,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         )
         self.module.analyze_with_llm.assert_called_once_with(
             self.module.extract_text_from_image.return_value["text"],
-            87.5, "spam", private=True,
+            87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True,
         )
         self.module.reply_to_line.assert_called_once()
         self.module.analyze_message.assert_not_called()
@@ -494,7 +495,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
 
 
     async def test_image_miss_ham_or_high_spam_match_still_gets_context_analysis(self):
-        matches = ((0.0, None), (96.0, "ham"), (99.9, "spam"))
+        matches = ((0.0, None, ""), (96.0, "ham", "ตัวอย่าง ham"), (99.9, "spam", "ตัวอย่าง spam"))
         for number, result in enumerate(matches, start=1):
             with self.subTest(result=result):
                 self.module.find_similarity.reset_mock()
@@ -512,7 +513,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 )
                 self.module.analyze_with_llm.assert_called_once_with(
                     self.module.extract_text_from_image.return_value["text"],
-                    result[0], result[1], private=True,
+                    result[0], result[1], matched_text=result[2], private=True,
                 )
                 self.assertIn(f"similarity={result[0]:.2f}%", str(logs.call_args_list))
                 self.assertIn(f"label={result[1]}", str(logs.call_args_list))
@@ -568,7 +569,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 self.module.analyze_with_llm.assert_called_once_with(
                     self.module.extract_text_from_image.return_value["text"],
-                    87.5, "spam", private=True,
+                    87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True,
                 )
                 self.assertIn("[IMAGE RESULT]", str(logs.call_args_list))
                 self.assertIn(f"status={status}", str(logs.call_args_list))
@@ -598,7 +599,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.find_similarity.assert_called_once()
         self.module.analyze_with_llm.assert_called_once_with(
             self.module.extract_text_from_image.return_value["text"],
-            87.5, "spam", private=True,
+            87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True,
         )
         self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
         self.module.reply_to_line.assert_not_called()

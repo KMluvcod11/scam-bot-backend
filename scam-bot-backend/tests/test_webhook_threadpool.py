@@ -28,7 +28,7 @@ def load_app():
     detector = ModuleType("detector")
     detector.analyze_message = Mock(return_value={"is_scam": False})
     detector.analyze_with_llm = Mock(
-        spec=lambda text, similarity_percent, matched_label=None, *, private=False: None,
+        spec=lambda text, similarity_percent, matched_label=None, *, matched_text="", private=False: None,
         return_value={
             "status": "no_risk_found", "is_scam": False,
             "risk_level": "low", "reason": "เหตุผลทดสอบ",
@@ -40,7 +40,7 @@ def load_app():
     )
     detector.find_similarity = Mock(
         spec=lambda text: None,
-        return_value=(87.5, "spam"),
+        return_value=(87.5, "spam", "SECRET_DATASET_EXAMPLE"),
     )
     messaging = ModuleType("messaging")
     messaging.reply_to_line = Mock(return_value=True)

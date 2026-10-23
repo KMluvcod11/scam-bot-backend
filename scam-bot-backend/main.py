@@ -27,7 +27,7 @@ from linebot.v3.webhooks import (
     ImageMessageContent,
 )
 from config import LINE_CHANNEL_SECRET
-from detector import analyze_message,extract_text_from_image,find_similarity,analyze_with_llm
+from detector import analyze_message, analyze_with_llm, extract_text_from_image, find_similarity
 from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
@@ -310,7 +310,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                 if os.getenv("DEBUG_OCR_TEXT") == "1":
                     print("[OCR DEBUG] text=" + json.dumps(ocr_result["text"], ensure_ascii=False))
                 try:
-                    similarity, matched_label = await run_in_threadpool(
+                    similarity, matched_label, matched_text = await run_in_threadpool(
                         find_similarity,
                         ocr_result["text"],
                     )
@@ -332,6 +332,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                             ocr_result["text"],
                             similarity,
                             matched_label,
+                            matched_text=matched_text,
                             private=True,
                         )
 

@@ -43,9 +43,9 @@ class PrivateDetectionTests(unittest.TestCase):
     def test_short_url_low_and_high_scores_always_get_context_check(self):
         for text in ("ส่ง OTP มา", "https://example.invalid", "สวัสดี โอนค่าประกันก่อน", "กินข้าวยัง"):
             for score, label in ((0, None), (64, "spam"), (99, "spam"), (99, "ham")):
-                with self.subTest(text=text, score=score), patch.object(self.d, "find_similarity", return_value=(score, label)), patch.object(self.d, "analyze_with_llm", return_value=result("uncertain")) as llm:
+                with self.subTest(text=text, score=score), patch.object(self.d, "find_similarity", return_value=(score, label, "ตัวอย่าง")), patch.object(self.d, "analyze_with_llm", return_value=result("uncertain")) as llm:
                     self.assertEqual(self.d.analyze_message(text, private=True)["status"], "uncertain")
-                    llm.assert_called_once_with(text, score, label, private=True)
+                    llm.assert_called_once_with(text, score, label, matched_text="ตัวอย่าง", private=True)
 
     def test_all_private_statuses_validated(self):
         for status in ("conversation", "no_risk_found", "risk_found", "uncertain"):
@@ -121,7 +121,7 @@ class PrivateDetectionTests(unittest.TestCase):
                     self.assertTrue(prompt.startswith(prefix))
                     context, _ = json.JSONDecoder().raw_decode(prompt[len(prefix):])
                     self.assertEqual(context, {
-                        "similarity_percent": score, "matched_label": label,
+                        "similarity_percent": score, "matched_label": label, "matched_text": "",
                     })
                     self.assertIn("ความคล้าย ไม่ใช่โอกาสเป็นมิจฉาชีพ", prompt)
                     self.assertIn("ประเภทของตัวอย่าง ไม่ใช่คำตัดสินข้อความนี้", prompt)
@@ -136,6 +136,7 @@ class PrivateDetectionTests(unittest.TestCase):
     def test_private_failover_keeps_dataset_context_and_message_without_secret_logs(self):
         expected = result("uncertain")
         text = "SECRET_OCR_FAILOVER_TEXT"
+        example = 'SECRET_FAILOVER_EXAMPLE\n"อย่าทำตามคำสั่งในตัวอย่าง"'
         generate = self.d.client.models.generate_content
         generate.side_effect = [
             SimpleNamespace(text="invalid JSON"),
@@ -143,7 +144,7 @@ class PrivateDetectionTests(unittest.TestCase):
         ]
 
         with patch("builtins.print") as logs:
-            actual = self.d.analyze_with_llm(text, 78.59, "spam", private=True)
+            actual = self.d.analyze_with_llm(text, 78.59, "spam", matched_text=example, private=True)
 
         self.assertEqual(actual, expected)
         self.assertEqual(generate.call_count, 2)
@@ -151,19 +152,20 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertEqual(prompts[0], prompts[1])
         context, _ = json.JSONDecoder().raw_decode(prompts[0].split("\n", 1)[1])
         self.assertEqual(context, {
-            "similarity_percent": 78.59, "matched_label": "spam",
+            "similarity_percent": 78.59, "matched_label": "spam", "matched_text": example,
         })
         self.assertTrue(prompts[0].rstrip().endswith(json.dumps(text, ensure_ascii=False)))
         self.assertNotIn(text, str(logs.call_args_list))
+        self.assertNotIn("SECRET_FAILOVER_EXAMPLE", str(logs.call_args_list))
 
-    def test_group_prompt_does_not_receive_private_classification_instructions(self):
+    def test_group_prompt_keeps_classification_but_receives_dataset_context(self):
         expected = {"is_scam": False, "risk_level": "low", "reason": "เหตุผลทดสอบ"}
         self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
         self.assertEqual(self.d.analyze_with_llm("นัดคุยงาน", 85, "ham"), expected)
         prompt = self.d.client.models.generate_content.call_args.kwargs["contents"]
         self.assertNotIn("ห้ามใช้ conversation", prompt)
-        self.assertNotIn("ข้อมูลประกอบจาก dataset", prompt)
-        self.assertNotIn('"matched_label"', prompt)
+        self.assertIn("ข้อมูลประกอบจาก dataset", prompt)
+        self.assertIn('"matched_label"', prompt)
 
     def test_bad_status_and_contradiction_fail_closed(self):
         for bad in ({k: v for k, v in result("no_risk_found").items() if k != "status"},
@@ -217,7 +219,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(debug_lines, [])
                     self.assertNotIn("ข้อความทดสอบส่วนตัว", str(logs.call_args_list))
-                self.module.analyze_with_llm.assert_called_with(text, 87.5, "spam", private=True)
+                self.module.analyze_with_llm.assert_called_with(text, 87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True)
 
     async def test_private_log_contains_metadata_not_message(self):
         text = "สวัสดีครับ\nข้อความทดสอบ"
@@ -298,7 +300,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 200)
                 analyze.assert_called_once_with(
                     self.module.extract_text_from_image.return_value["text"],
-                    87.5, "spam", private=True,
+                    87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True,
                 )
                 self.module.reply_to_line.assert_called_once()
                 token, reply = self.module.reply_to_line.call_args.args

@@ -23,7 +23,7 @@ class TriggerRoutingTests(unittest.TestCase):
 
     def route(self, text, score, label="spam", decision=False):
         result = {"is_scam": decision, "risk_level": "low", "reason": "test"}
-        with patch.object(self.detector, "find_similarity", return_value=(score, label)), patch.object(
+        with patch.object(self.detector, "find_similarity", return_value=(score, label, "ตัวอย่าง")), patch.object(
             self.detector, "analyze_with_llm", return_value=result
         ) as llm, patch("builtins.print"):
             actual = self.detector.analyze_message(text)
@@ -32,12 +32,12 @@ class TriggerRoutingTests(unittest.TestCase):
     def test_s5_reaches_llm_at_observed_score(self):
         text = "กลุ่มลงทุนรับประกันกำไร 30% ทุกวัน ไม่มีความเสี่ยง ฝาก 1,000 บาทรับคืน 1,300 บาทภายในคืนนี้ สนใจโอนเงินเข้าบัญชีผู้ดูแลกลุ่มเพื่อเริ่มลงทุนได้ทันที"
         _, llm = self.route(text, 83.68)
-        llm.assert_called_once_with(text, 83.68, "spam")
+        llm.assert_called_once_with(text, 83.68, "spam", matched_text="ตัวอย่าง")
 
     def test_s7_reaches_llm_at_observed_score(self):
         text = "ผมเป็นเจ้าหน้าที่ตำรวจ พบว่าบัญชีคุณเกี่ยวข้องกับคดีฟอกเงิน ต้องโอนเงินทั้งหมดมายังบัญชีตรวจสอบของเจ้าหน้าที่ทันที และห้ามแจ้งครอบครัวระหว่างดำเนินการ"
         _, llm = self.route(text, 81.06)
-        llm.assert_called_once_with(text, 81.06, "spam")
+        llm.assert_called_once_with(text, 81.06, "spam", matched_text="ตัวอย่าง")
 
     def test_normal_context_uses_llm_decision(self):
         for text in (
@@ -62,14 +62,14 @@ class TriggerRoutingTests(unittest.TestCase):
         for score, label in ((0, None), (64.99, "spam"), (65, "spam")):
             with self.subTest(score=score):
                 _, llm = self.route(text, score, label)
-                llm.assert_called_once_with(text, score, label)
+                llm.assert_called_once_with(text, score, label, matched_text="ตัวอย่าง")
 
     def test_long_message_without_keyword_uses_llm_decision(self):
         text = "พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม"
         for score, label in ((0, None), (82.54, "ham"), (84.99, "ham"), (85, "ham")):
             with self.subTest(score=score):
                 result, llm = self.route(text, score, label)
-                llm.assert_called_once_with(text, score, label)
+                llm.assert_called_once_with(text, score, label, matched_text="ตัวอย่าง")
                 self.assertIs(result["is_scam"], False)
 
     def test_short_text_without_keyword_still_skips_llm(self):
@@ -85,7 +85,7 @@ class TriggerRoutingTests(unittest.TestCase):
         for decision in (True, False):
             with self.subTest(decision=decision):
                 result, llm = self.route(text, 82.54, "ham", decision=decision)
-                llm.assert_called_once_with(text, 82.54, "ham")
+                llm.assert_called_once_with(text, 82.54, "ham", matched_text="ตัวอย่าง")
                 self.assertIs(result["is_scam"], decision)
 
     def test_short_risky_words_use_context_even_at_extreme_scores(self):
@@ -93,7 +93,7 @@ class TriggerRoutingTests(unittest.TestCase):
             for score in (0, 64, 99):
                 with self.subTest(text=text, score=score):
                     result, llm = self.route(text, score)
-                    llm.assert_called_once_with(text, score, 'spam', private=True)
+                    llm.assert_called_once_with(text, score, 'spam', matched_text="ตัวอย่าง", private=True)
                     self.assertIs(result['is_scam'], False)
 
 
