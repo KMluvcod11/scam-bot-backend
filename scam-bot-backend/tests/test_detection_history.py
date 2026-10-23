@@ -93,6 +93,28 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(row["sender_display_name"], "ผู้ทดสอบ")
 
 
+    def test_save_detection_uses_case_id_as_row_id(self):
+        case_hex = "0f8f2b7c1d2e4f309a1b2c3d4e5f6a7b"
+        self.assertTrue(self.history.save_detection(self.event, {"is_scam": False}, case_id=case_hex))
+        row = self.log_table.upsert.call_args.args[0]
+        self.assertEqual(row["id"], "0f8f2b7c-1d2e-4f30-9a1b-2c3d4e5f6a7b")
+        self.assertEqual(self.log_table.upsert.call_args.kwargs,
+                         {"on_conflict": "line_event_id", "ignore_duplicates": True})
+
+    def test_without_case_id_row_has_no_id_so_database_generates_it(self):
+        self.history.save_detection(self.event, {"is_scam": False})
+        self.assertNotIn("id", self.log_table.upsert.call_args.args[0])
+
+    def test_save_detection_image_prefix_and_fallback(self):
+        self.event.message = SimpleNamespace(type="image", id="img")
+        self.history.save_detection(self.event, {"status": "risk_found", "is_scam": True},
+                                    image_text="  โอนเงินด่วน  ")
+        row = self.log_table.upsert.call_args.args[0]
+        self.assertEqual(row["message_text"], "[รูปภาพ] โอนเงินด่วน")
+        self.assertEqual(row["message_preview"], "[รูปภาพ] โอนเงินด่วน")
+        self.history.save_detection(self.event, {"status": "risk_found", "is_scam": True}, image_text="   ")
+        self.assertEqual(self.log_table.upsert.call_args.args[0]["message_text"], "[รูปภาพ]")
+
     def test_image_without_text_saves_marker_and_assessment_without_raw_content(self):
         self.event.message = SimpleNamespace(type="image", id="SECRET_IMAGE_ID")
         result = {

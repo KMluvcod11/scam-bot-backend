@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import uuid
 from uuid import uuid4
 from hashlib import sha256
 from datetime import datetime, timezone
@@ -29,7 +30,9 @@ from config import LINE_CHANNEL_SECRET
 from detector import analyze_message,extract_text_from_image,find_similarity,analyze_with_llm
 from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
-from learning import LessonStore, build_lesson, build_case_detail
+from learning import LessonStore, build_lesson
+from flex_cards import build_result_card
+import mini_history
 from mini_api import create_mini_router, mini_web_origins
 from detection_history import save_detection, save_group_join, save_group_leave, save_group_members
 
@@ -39,8 +42,8 @@ parser = WebhookParser(LINE_CHANNEL_SECRET)
 event_guard = EventGuard()
 lesson_store = LessonStore()
 app.add_middleware(CORSMiddleware, allow_origins=mini_web_origins(),
-                   allow_methods=["GET"], allow_headers=["Authorization"])
-app.include_router(create_mini_router(lambda: lesson_store))
+                   allow_methods=["GET", "DELETE"], allow_headers=["Authorization"])
+app.include_router(create_mini_router(mini_history))
 
 
 def parse_webhook(body: bytes, signature: str | None):
@@ -252,6 +255,8 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
         print(f"[MESSAGE] source={event.source.type} type=image")
 
         image_result = {"status": "error", "is_scam": None}
+        ocr_text = ""
+        image_case_id = None
 
         try:
             image_content = await run_in_threadpool(
@@ -300,6 +305,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
 
 
             if ocr_result["status"] == "ok":
+                ocr_text = ocr_result["text"]
                 # เปิดเฉพาะตอนทดสอบในเครื่อง เพราะข้อความอาจมีข้อมูลส่วนตัว
                 if os.getenv("DEBUG_OCR_TEXT") == "1":
                     print("[OCR DEBUG] text=" + json.dumps(ocr_result["text"], ensure_ascii=False))
@@ -359,6 +365,10 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
 
         if should_reply:
             reply_msg = image_reply(image_result)
+            card = None
+            # การ์ดและปุ่มรายละเอียดเฉพาะแชตส่วนตัว ในกลุ่มคงคำเตือนข้อความสั้นแบบเดิม
+            if event.source.type == "user" and ocr_text:
+                image_case_id, card, _ = open_result_case(event, ocr_text, image_result, source="image")
             try:
                 sent = await run_in_threadpool(
                     timed_call,
@@ -366,6 +376,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                     reply_to_line,
                     event.reply_token,
                     reply_msg,
+                    **({"card": card} if card else {}),
                 )
                 print(f"[IMAGE REPLY] sent={sent}")
             except Exception as error:
@@ -375,6 +386,13 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                 )
                 sent = False
 
+        # แชตส่วนตัว: เก็บข้อความ OCR และรหัสเคสไว้ให้หน้าประวัติ ส่วนกลุ่มบันทึกแบบเดิม
+        private_options = {}
+        if event.source.type == "user":
+            if ocr_text:
+                private_options["image_text"] = ocr_text
+            if image_case_id:
+                private_options["case_id"] = image_case_id
         await run_in_threadpool(
             timed_call,
             "history",
@@ -383,6 +401,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
             image_result,
             warning_attempted=should_reply,
             warning_sent=sent,
+            **private_options,
         )
 
         return
@@ -517,9 +536,49 @@ def image_reply(result: dict) -> str:
 
 
 
+CASE_NAMESPACE = uuid.UUID("6f1d3c2a-8b4e-4f7a-9c1d-2e3f4a5b6c7d")
+
+
+def case_id_for(webhook_event_id: str) -> str:
+    """รหัสเคสคงที่ต่อ event: LINE ส่ง event ซ้ำหลังรีสตาร์ตก็ได้รหัสเดิม ตรงกับแถวที่บันทึกไว้แล้ว."""
+    return uuid.uuid5(CASE_NAMESPACE, webhook_event_id).hex
+
+
+def open_result_case(event, text: str, result: dict, *, source: str):
+    """เก็บเคสให้ Mini App แล้วสร้างการ์ดผลตรวจ คืน (case_id, card, has_lesson).
+
+    ใช้กับผลตรวจ 3 สถานะในแชตส่วนตัว; ถ้าส่วนนี้พัง ผู้ใช้ยังได้คำตอบข้อความเดิม
+    """
+    try:
+        # ใช้กฎเดียวกับ private_reply(): สถานะกับ is_scam ต้องสอดคล้องกัน ไม่งั้นไม่ทำการ์ด
+        status = result.get("status")
+        consistent = ((status == "risk_found" and result.get("is_scam") is True)
+                      or (status in {"uncertain", "no_risk_found"} and result.get("is_scam") is False))
+        if not consistent:
+            return None, None, False
+        owner = getattr(event.source, "user_id", None)
+        if not owner:
+            # ไม่รู้เจ้าของ = เปิดเคสใน Mini App ไม่ได้ ส่งการ์ดแบบไม่มีปุ่ม
+            print("[LEARNING] ไม่เพิ่มปุ่ม: ไม่มีเจ้าของ")
+            return None, build_result_card(result, source=source, quote=text, case_id=None), False
+        # รหัสนี้ใช้ทั้งในลิงก์การ์ดและเป็น id ของแถวที่ save_detection() บันทึก
+        case_id = case_id_for(event.webhook_event_id)
+        lesson = build_lesson(text, result)
+        # บทเรียนในแชต (postback) ยังเก็บใน RAM เฉพาะผลเสี่ยง ใช้เมื่อไม่ได้ตั้งค่า LIFF
+        lesson_saved = bool(lesson) and lesson_store.add(owner, lesson, case_id=case_id) is not None
+        card = build_result_card(result, source=source, quote=text, case_id=case_id,
+                                 allow_postback=lesson_saved)
+        return case_id, card, lesson_saved
+    except Exception as error:
+        print(f"[LEARNING ERROR] type={type(error).__name__}")
+        return None, None, False
+
+
 async def process_private_event(event: MessageEvent):
     """ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม."""
     case_id = None
+    card = None
+    has_lesson = False
     result = None
     if not isinstance(event.message, TextMessageContent):
         reply_msg = "ตอนนี้ยังตรวจรูปภาพ สติกเกอร์ เสียง วิดีโอ หรือไฟล์ไม่ได้ครับ กรุณาคัดลอกข้อความมาส่งแทน"
@@ -534,27 +593,22 @@ async def process_private_event(event: MessageEvent):
             result = {"status": "error", "is_scam": None, "error_stage": "analysis"}
             reply_msg = PRIVATE_ERROR
         else:
-            # บทเรียนเสียต้องไม่ทำให้ผลตรวจที่สำเร็จกลายเป็น error
-            try:
-                lesson = build_lesson(event.message.text, result)
-                if lesson:
-                    received_at = datetime.fromtimestamp(event.timestamp / 1000, timezone.utc).isoformat()
-                    detail = build_case_detail(event.message.text, result, received_at)
-                    case_id = lesson_store.add(getattr(event.source, "user_id", None), lesson, detail=detail)
-                    if not case_id:
-                        print("[LEARNING] ไม่เพิ่มปุ่ม: ไม่มีเจ้าของหรือที่เก็บเต็ม")
-            except Exception as error:
-                print(f"[LEARNING ERROR] type={type(error).__name__}")
+            case_id, card, has_lesson = open_result_case(event, event.message.text, result, source="text")
     try:
-        options = {"learn_case_id": case_id} if case_id else {}
+        options = {}
+        if case_id and has_lesson:
+            options["learn_case_id"] = case_id
+        if card:
+            options["card"] = card
         sent = await run_in_threadpool(reply_to_line, event.reply_token, reply_msg, **options)
         print("[ACTION] LINE API ยอมรับคำตอบส่วนตัวแล้ว" if sent else "[ACTION] ส่งคำตอบส่วนตัวไม่สำเร็จ")
     except Exception as error:
         print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
         sent = False
     if result is not None:
+        options = {"case_id": case_id} if case_id else {}
         await run_in_threadpool(timed_call, "history", save_detection, event, result,
-                                warning_attempted=True, warning_sent=sent)
+                                warning_attempted=True, warning_sent=sent, **options)
 
 
 async def process_menu_check(event: PostbackEvent):

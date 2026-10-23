@@ -76,7 +76,9 @@ class RichMenuSetupTests(unittest.TestCase):
         self.assertEqual([area["bounds"]["x"] for area in areas], [0, 1000, 1740])
         self.assertEqual(sum(area["bounds"]["width"] for area in areas), 2500)
         self.assertTrue(all(area["bounds"]["height"] == 843 for area in areas))
-        self.assertEqual(areas[0]["action"]["data"], "menu:check")
+        # ปุ่มตรวจข้อความเปิด Mini App หน้าประวัติ แทนการให้บอตตอบข้อความ
+        self.assertEqual(areas[0]["action"]["type"], "uri")
+        self.assertEqual(areas[0]["action"]["uri"], "https://liff.line.me/1234567890-TestApp/history")
         self.assertEqual(areas[1]["action"]["uri"], "https://liff.line.me/1234567890-TestApp/lessons")
         self.assertEqual(areas[2]["action"]["uri"], "https://liff.line.me/1234567890-TestApp/help")
         for invalid in ("", "123-app?secret=1", "https://bad.invalid", None):

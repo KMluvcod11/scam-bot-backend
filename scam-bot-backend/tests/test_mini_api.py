@@ -1,4 +1,4 @@
-"""ตรวจการอ่านเคสผ่าน HTTP ในเครื่อง; จำลอง LINE/AI/ประวัติทั้งหมด ไม่อ่าน .env."""
+"""ตรวจ API ของ Mini App ผ่าน HTTP ในเครื่อง; จำลอง LINE/AI/ประวัติทั้งหมด ไม่อ่าน .env."""
 import os
 import time
 import unittest
@@ -6,12 +6,46 @@ from unittest.mock import Mock, patch
 
 import requests
 import test_webhook_threadpool as fixtures
-from test_private_chat import private_event, result
+
+
+class FakeHistory:
+    """แทน mini_history: เก็บเคสในหน่วยความจำ และบันทึกว่าถูกถามด้วยเจ้าของคนไหน."""
+
+    def __init__(self, unavailable):
+        self.cases, self.calls, self.unavailable, self.broken = {}, [], unavailable, False
+
+    def add(self, case_id, owner, message="ส่ง OTP มา"):
+        self.cases[case_id] = (owner, {
+            "id": case_id, "title": message, "category": "message", "message": message,
+            "receivedAt": "2026-10-23T08:00:00+00:00", "status": "risk_found",
+            "reason": "เหตุผลทดสอบ", "lessonId": "otp", "nextSteps": ["หยุดก่อน"],
+            "warningPoints": [{"icon": "user", "title": "พบคำว่า OTP", "description": "x"}]})
+
+    def _check(self, name, owner):
+        self.calls.append((name, owner))
+        if self.broken:
+            raise self.unavailable()
+
+    def list_cases(self, owner, limit=50):
+        self._check("list", owner)
+        keys = ("id", "title", "category", "receivedAt", "status")
+        return [{key: detail[key] for key in keys}
+                for case_owner, detail in self.cases.values() if case_owner == owner][:limit]
+
+    def get_case(self, case_id, owner):
+        self._check("get", owner)
+        case = self.cases.get(case_id)
+        return dict(case[1]) if case and case[0] == owner else None
+
+    def delete_all(self, owner):
+        self._check("delete", owner)
+        mine = [key for key, (case_owner, _) in self.cases.items() if case_owner == owner]
+        for key in mine:
+            del self.cases[key]
+        return len(mine)
 
 
 class MiniApiTests(unittest.IsolatedAsyncioTestCase):
-    post_events = fixtures.WebhookThreadpoolTests.post_events
-
     async def asyncSetUp(self):
         self.environment = patch.dict(os.environ, {
             "MINI_LIFF_ID": "1234567890-TestApp", "LINE_LOGIN_CHANNEL_ID": "1234567890",
@@ -29,60 +63,57 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
         self.verification = patch.object(self.api.requests, "post", return_value=self.verify_response)
         self.verify = self.verification.start()
         self.addCleanup(self.verification.stop)
+        history_module = self.module.mini_history
+        self.history = FakeHistory(history_module.HistoryUnavailable)
+        for name in ("list_cases", "get_case", "delete_all"):
+            patcher = patch.object(history_module, name, getattr(self.history, name))
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
 
-    async def create_case(self, text="ส่ง OTP มา", number=1):
-        self.module.analyze_message.return_value = result("risk_found")
-        response = await self.post_events([private_event(text, number)])
-        self.assertEqual(response.status_code, 200)
-        return self.module.reply_to_line.call_args.kwargs["learn_case_id"]
+    def auth(self, token="test-id-token"):
+        return {"Authorization": f"Bearer {token}"}
+
+    def create_case(self, text="ส่ง OTP มา", number=1, owner="offline-user"):
+        case_id = f"{number:032x}"
+        self.history.add(case_id, owner, text)
+        return case_id
 
     async def read_case(self, case_id, token="test-id-token", **kwargs):
-        return await self.http.get(f"/api/mini/cases/{case_id}",
-                                   headers={"Authorization": f"Bearer {token}"}, **kwargs)
+        return await self.http.get(f"/api/mini/cases/{case_id}", headers=self.auth(token), **kwargs)
 
-    async def test_reads_exact_original_case_after_new_message_without_ai_or_database(self):
-        first = await self.create_case("ส่ง OTP มา", 1)
-        await self.create_case("รับประกันกำไร ไม่มีความเสี่ยง", 2)
-        self.module.analyze_message.reset_mock()
-        self.module.save_detection.reset_mock()
+    async def test_reads_exact_original_case_from_history_without_ai(self):
+        first = self.create_case("ส่ง OTP มา", 1)
+        self.create_case("รับประกันกำไร ไม่มีความเสี่ยง", 2)
         response = await self.read_case(first)
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertEqual(data["id"], first)
         self.assertEqual(data["message"], "ส่ง OTP มา")
-        self.assertEqual(data["reason"], result("risk_found")["reason"])
-        self.assertEqual(data["receivedAt"], "1970-01-01T00:00:00+00:00")
-        self.assertEqual(data["lessonId"], "otp")
         self.assertNotIn("offline-user", response.text)
         self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.history.calls, [("get", "offline-user")])
         self.verify.assert_called_with("https://api.line.me/oauth2/v2.1/verify",
             data={"id_token": "test-id-token", "client_id": "1234567890"},
             timeout=10, allow_redirects=False)
         self.module.analyze_message.assert_not_called()
-        self.module.save_detection.assert_not_called()
 
-    async def test_wrong_owner_unknown_expired_and_restart_are_indistinguishable(self):
-        now = [0]
-        self.module.lesson_store = self.module.LessonStore(clock=lambda: now[0])
-        case_id = await self.create_case()
+    async def test_case_other_owner_unknown_and_malformed_all_404_same_body(self):
+        case_id = self.create_case()
         self.identity["sub"] = "another-user"
         wrong_owner = await self.read_case(case_id)
         self.identity["sub"] = "offline-user"
         unknown = await self.read_case("f" * 32)
-        now[0] = 900
-        expired = await self.read_case(case_id)
-        self.module.lesson_store = self.module.LessonStore()
-        restarted = await self.read_case(case_id)
-        for response in (wrong_owner, unknown, expired, restarted):
+        malformed = await self.read_case("not-a-case")
+        for response in (wrong_owner, unknown, malformed):
             self.assertEqual(response.status_code, 404)
             self.assertEqual(response.json(), wrong_owner.json())
             self.assertNotIn("OTP", response.text)
             self.assertEqual(response.headers["cache-control"], "no-store")
 
     async def test_query_user_id_cannot_override_verified_owner(self):
-        case_id = await self.create_case()
+        case_id = self.create_case()
         self.identity["sub"] = "another-user"
         response = await self.read_case(case_id, params={"user_id": "offline-user"})
         self.assertEqual(response.status_code, 404)
@@ -95,7 +126,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
         self.verify.assert_not_called()
 
     async def test_line_rejection_expired_wrong_channel_and_invalid_identity_never_release_case(self):
-        case_id = await self.create_case()
+        case_id = self.create_case()
         for changes in ({"aud": "different-channel"}, {"iss": "https://attacker.invalid"},
                         {"sub": ""}, {"exp": 0}, {"exp": "9999999999"}, {"exp": float("nan")}):
             with self.subTest(changes=changes):
@@ -108,7 +139,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await self.read_case(case_id)).status_code, 401)
 
     async def test_line_failure_and_bad_json_do_not_leak_errors(self):
-        case_id = await self.create_case()
+        case_id = self.create_case()
         for error in (requests.Timeout("SECRET_TOKEN"), requests.ConnectionError("SECRET_TOKEN")):
             self.verify.side_effect = error
             response = await self.read_case(case_id)
@@ -139,15 +170,59 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, expected)
             self.assertEqual(response.headers.get("access-control-allow-origin"), origin if expected == 200 else None)
 
-    async def test_store_copies_detail_and_preserves_legacy_lesson(self):
-        case_id = await self.create_case()
-        detail = self.module.lesson_store.get_detail(case_id, "offline-user")
-        detail["warningPoints"][0]["title"] = "changed"
-        self.assertNotEqual(self.module.lesson_store.get_detail(case_id, "offline-user")["warningPoints"][0]["title"], "changed")
-        self.assertIn("OTP", self.module.lesson_store.get(case_id, "offline-user"))
+    async def test_cors_allows_delete_from_configured_origin(self):
+        response = await self.http.options("/api/mini/history", headers={
+            "Origin": "https://mini.example", "Access-Control-Request-Method": "DELETE",
+            "Access-Control-Request-Headers": "authorization"})
+        self.assertEqual(response.status_code, 200)
+
+    async def test_history_lists_only_verified_owner_cases(self):
+        self.create_case("ของฉัน", 1)
+        self.create_case("ของคนอื่น", 2, owner="another-user")
+        response = await self.http.get("/api/mini/history", headers=self.auth(),
+                                       params={"user_id": "another-user"})
+        self.assertEqual(response.status_code, 200)
+        cases = response.json()["cases"]
+        self.assertEqual([item["title"] for item in cases], ["ของฉัน"])
+        self.assertNotIn("message", cases[0])
+        self.assertEqual(self.history.calls, [("list", "offline-user")])
+        self.assertEqual(response.headers["cache-control"], "no-store")
+
+    async def test_history_empty_returns_empty_list(self):
+        response = await self.http.get("/api/mini/history", headers=self.auth())
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"cases": []})
+
+    async def test_delete_removes_verified_owner_and_is_repeatable(self):
+        for number in (1, 2, 3):
+            self.create_case(number=number)
+        self.create_case(number=4, owner="another-user")
+        first = await self.http.delete("/api/mini/history", headers=self.auth())
+        second = await self.http.delete("/api/mini/history", headers=self.auth())
+        self.assertEqual((first.status_code, first.json()), (200, {"deleted": 3}))
+        self.assertEqual((second.status_code, second.json()), (200, {"deleted": 0}))
+        self.assertEqual(first.headers["cache-control"], "no-store")
+        self.assertEqual(len(self.history.cases), 1)
+
+    async def test_all_endpoints_401_without_token_and_never_touch_history(self):
+        for method, path in (("get", "/api/mini/history"), ("delete", "/api/mini/history"),
+                             ("get", "/api/mini/cases/" + "a" * 32)):
+            response = await getattr(self.http, method)(path)
+            self.assertEqual(response.status_code, 401)
+            self.assertEqual(response.headers["cache-control"], "no-store")
+        self.assertEqual(self.history.calls, [])
+
+    async def test_history_unavailable_is_503_without_raw_error(self):
+        self.history.broken = True
+        for method, path in (("get", "/api/mini/history"), ("delete", "/api/mini/history"),
+                             ("get", "/api/mini/cases/" + "a" * 32)):
+            response = await getattr(self.http, method)(path, headers=self.auth())
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("ระบบประวัติขัดข้อง", response.text)
+            self.assertEqual(response.headers["cache-control"], "no-store")
 
     async def test_url_contains_only_random_case_and_validated_liff_id(self):
-        case_id = await self.create_case()
+        case_id = "a" * 32
         self.assertEqual(self.api.get_mini_case_url(case_id), f"https://liff.line.me/1234567890-TestApp?case={case_id}")
         self.assertIsNone(self.api.get_mini_case_url("invalid"))
         for value in ("", "123-abc?token=SECRET", "https://attacker.invalid"):

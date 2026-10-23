@@ -3,7 +3,7 @@
 ## พฤติกรรมรอบนี้
 
 ส่งข้อความในแชทส่วนตัว → `analyze_message()` คืน `risk_found` → `process_private_event()`
-สร้างบทเรียนและรายละเอียด → `LessonStore.add()` คืนรหัสสุ่ม → `reply_to_line()` ส่งปุ่ม
+`open_result_case()` สร้าง `case_id` → การ์ดใส่ลิงก์ → `save_detection(case_id=...)` บันทึกแถวด้วย id เดียวกัน
 `https://liff.line.me/{LIFF_ID}?case={รหัสสุ่ม}` → หน้า `/mini/result` เริ่ม LIFF →
 ส่ง ID token ทาง Authorization header → Bot API ตรวจ token กับ LINE → เทียบเจ้าของ
 → คืนผลเดิมให้หน้าเว็บ ไม่เรียก AI หรือ Vector ซ้ำ และไม่เพิ่ม Dataset จากการเปิดหน้า
@@ -65,7 +65,7 @@ Vite ในเครื่องตั้ง `/api/mini` ไป `127.0.0.1:8001`
 4. นำ LIFF ID และ LINE Login Channel ID มาใส่ค่าข้างต้น
 5. ถ้า channel อยู่ระหว่างพัฒนา ให้บัญชีที่ทดสอบมีสิทธิ์ทดสอบใน channel นั้น
 6. เว็บต้องให้การเปิด `/mini/result` โดยตรงคืน `index.html` ของ SPA ด้วย
-7. ส่งข้อความตรวจใหม่ แล้วทดสอบปุ่มใหม่ภายใน 15 นาที ปุ่ม postback เก่าไม่เปลี่ยนย้อนหลัง
+7. ส่งข้อความตรวจใหม่ แล้วกดปุ่ม "ดูรายละเอียด" บนการ์ด (ปุ่มเก่าก่อนเปลี่ยนระบบจะเปิดไม่ได้)
 
 Channel ID ของ Messaging API, Provider ID และ LIFF ID เป็นคนละค่า
 เลขที่ใช้ตรวจ ID token ต้องเป็น Channel ID ของ LINE Login ที่ออก token ให้เว็บนี้
@@ -76,8 +76,8 @@ Channel ID ของ Messaging API, Provider ID และ LIFF ID เป็น�
 |---|---|---|
 | `lesson_points(text)` | เลือกไม่เกิน 3 หัวข้อจากคำที่มีจริง | การ์ดคำแนะนำ ไม่ถือคำที่พบเป็นหลักฐาน Scam |
 | `build_case_detail(text, result, received_at)` | จัดผลเดิมที่ผ่าน `build_lesson()` แล้วเป็นข้อมูลหน้าเว็บ | dict ที่มีข้อความ เวลา reason และคำแนะนำ ไม่มีการเรียก AI |
-| `LessonStore.add(owner, lesson, detail=...)` | คัดลอกข้อมูลเข้า RAM พร้อมเจ้าของและอายุ | รหัสสุ่ม; ไม่มีเจ้าของหรือเต็ม คืน None และไม่เพิ่มปุ่ม |
-| `LessonStore.get_detail(case_id, owner)` | ล้างเคสหมดอายุแล้วเทียบเจ้าของ | สำเนารายละเอียด หรือ None; ไม่ส่ง owner ให้เว็บ |
+| `mini_history.list_cases(owner)` | อ่านแถวแชตส่วนตัว 3 สถานะของเจ้าของ ใหม่สุดก่อน 50 รายการ | รายการสั้น (ไม่มีข้อความเต็ม); Supabase ล่ม → `HistoryUnavailable` |
+| `mini_history.get_case(case_hex, owner)` / `delete_all(owner)` | อ่านเคสเดียวของเจ้าของ / ลบทุกแถวแชตส่วนตัวของเจ้าของ | รายละเอียดหรือ None / จำนวนที่ลบ |
 | `get_mini_case_url(case_id)` | ตรวจรูปแบบ ID จาก environment และรหัสเคส | URL ที่ไม่มีข้อความ/user ID/token; ตั้งค่าไม่ครบคืน None |
 | `verify_line_owner(authorization)` | ส่ง ID token ให้ LINE ตรวจด้วย client_id ฝั่ง server แล้วตรวจ aud/iss/exp/sub | เจ้าของจาก `sub`; ผิด/หมดอายุ 401, ยังไม่ตั้งค่าหรือ LINE ขัดข้อง 503 |
 | `read_case(case_id, authorization)` | ตรวจตัวตนก่อนอ่านเคสของเจ้าของ | JSON + no-store; ไม่พบ/ผิดเจ้าของ/หมดอายุ ตอบ 404 ข้อความเดียวกัน |
@@ -87,8 +87,8 @@ Channel ID ของ Messaging API, Provider ID และ LIFF ID เป็น�
 
 ## ข้อจำกัดและการทดสอบ
 
-- เก็บเคสใน RAM process เดียว อายุ 900 วินาที สูงสุด 1,000 เคส รีสตาร์ตแล้วหาย
-- รัน bot เป็น **1 worker / 1 instance** ในรอบนี้ API กับ webhook ต้องเข้าถึง store เดียวกัน
+- เคสอ่านจาก `detection_logs` (Supabase) ไม่หมดอายุ; `LessonStore` ใน RAM ใช้แค่บทเรียน postback เมื่อไม่ได้ตั้งค่า LIFF
+- บันทึกแถวหลังส่งการ์ดราว 1 วินาที หน้าเว็บจึงลองเปิดซ้ำ 1 ครั้งหลังได้ 404
 - `get_detail()` ตรวจอายุเมื่อขออ่าน ไม่สามารถถอนข้อมูลที่ผู้ใช้โหลดไปแล้วได้
 - อ่านเคสไม่เขียนฐานข้อมูลเพิ่ม แต่การตรวจข้อความยังบันทึกประวัติตาม `save_detection()` เดิม
 - `MINI_WEB_ORIGIN` รับ origin เดียว CORS ไม่ใช้ wildcard; CORS ไม่ใช้แทนการตรวจ token

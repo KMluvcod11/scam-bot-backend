@@ -28,7 +28,8 @@ def build_rich_menu(liff_id):
         "chatBarText": "เมนู Eh?Bot",
         "areas": [
             {"bounds": {"x": 0, "y": 0, "width": 1000, "height": 843},
-             "action": {"type": "postback", "label": "ตรวจข้อความ", "data": "menu:check"}},
+             # เปิด Mini App หน้าประวัติ; main.py ยังรับ menu:check ไว้สำหรับเมนูเก่าที่ยังค้างในเครื่องผู้ใช้
+             "action": {"type": "uri", "label": "ตรวจข้อความ", "uri": liff_url + "/history"}},
             {"bounds": {"x": 1000, "y": 0, "width": 740, "height": 843},
              "action": {"type": "uri", "label": "เรียนรู้กลโกง", "uri": liff_url + "/lessons"}},
             {"bounds": {"x": 1740, "y": 0, "width": 760, "height": 843},

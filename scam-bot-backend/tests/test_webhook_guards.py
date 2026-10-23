@@ -12,6 +12,12 @@ from unittest.mock import patch
 import test_webhook_threadpool as fixtures
 
 
+def warning_kwargs(save_mock):
+    """เช็กเฉพาะผลการแจ้งเตือน; แชตส่วนตัวมี case_id/image_text เพิ่มซึ่งเทสต์อื่นตรวจแยก."""
+    kwargs = save_mock.call_args.kwargs
+    return {key: kwargs[key] for key in ("warning_attempted", "warning_sent") if key in kwargs}
+
+
 class EventGuardTests(unittest.TestCase):
     def setUp(self):
         guard_type = type(fixtures.load_app().event_guard)
@@ -225,7 +231,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
         self.module.save_detection.assert_called_once()
-        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+        self.assertEqual(warning_kwargs(self.module.save_detection), {
             "warning_attempted": False, "warning_sent": None,
         })
 
@@ -368,7 +374,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_called_once()
         self.assertIn("พบสัญญาณเสี่ยง", self.module.reply_to_line.call_args.args[1])
         self.module.save_detection.assert_called_once()
-        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+        self.assertEqual(warning_kwargs(self.module.save_detection), {
             "warning_attempted": True, "warning_sent": True,
         })
         self.assertIn("status=ok", str(logs.call_args_list))
@@ -482,7 +488,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_called_once()
         self.module.analyze_message.assert_not_called()
         self.module.save_detection.assert_called_once()
-        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+        self.assertEqual(warning_kwargs(self.module.save_detection), {
             "warning_attempted": True, "warning_sent": True,
         })
 
@@ -663,9 +669,9 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.module.reply_to_line.assert_called_once()
                 self.module.analyze_with_llm.assert_called_once()
                 self.module.analyze_message.assert_called_once_with("ข้อความถัดไป")
-                self.assertEqual(history.call_args_list[0].kwargs, {
-                    "warning_attempted": True, "warning_sent": True,
-                })
+                saved = history.call_args_list[0].kwargs
+                self.assertEqual({key: saved[key] for key in ("warning_attempted", "warning_sent")},
+                                 {"warning_attempted": True, "warning_sent": True})
                 self.assertNotIn("SECRET_HISTORY_ERROR", str(logs.call_args_list))
 
 

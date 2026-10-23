@@ -124,13 +124,31 @@ def get_sender_display_name(kind: str, source_id: str, user_id: str) -> str | No
 
 # 2. รับค่า: reply_token ของ event และ message_text ที่ต้องการตอบ
 # คืนค่า bool: True = LINE API ยอมรับ; False = HTTP/เครือข่ายผิดพลาด
-def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | None = None) -> bool:
+# card: Flex Message จาก flex_cards.build_result_card(); มีการ์ดจะส่งการ์ดอย่างเดียว
+def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | None = None,
+                  card: dict | None = None) -> bool:
     # 2.1 ประกาศปลายทาง header ยืนยันตัวตน และ JSON payload
     url = "https://api.line.me/v2/bot/message/reply"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
+    if card:
+        try:
+            res = timed_call("line_reply", requests.post, url, headers=headers,
+                             json={"replyToken": reply_token, "messages": [card]}, timeout=10)
+            res.raise_for_status()
+            return True
+        except requests.HTTPError as e:
+            status = getattr(e.response, "status_code", None)
+            if status != 400:
+                print(f"[SEND ERROR] stage=line_reply_card status={status}")
+                return False
+            # 400 = LINE ไม่รับรูปแบบการ์ด และยังไม่ใช้ reply token จึงส่งข้อความธรรมดาแทนได้หนึ่งครั้ง
+            print("[SEND ERROR] stage=line_reply_card status=400 fallback=text")
+        except requests.RequestException as e:
+            print(f"[SEND ERROR] stage=line_reply_card type={type(e).__name__}")
+            return False
     payload = {
         "replyToken": reply_token,
         "messages": [{"type": "text", "text": message_text}]

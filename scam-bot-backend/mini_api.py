@@ -1,4 +1,4 @@
-"""อ่านเคสชั่วคราวของเจ้าของ หลังตรวจ ID token กับ LINE แล้วเท่านั้น."""
+"""API ของ Mini App: อ่าน/ลบประวัติของเจ้าของ หลังตรวจ ID token กับ LINE แล้วเท่านั้น."""
 import math
 import os
 import re
@@ -72,18 +72,42 @@ def verify_line_owner(authorization: str) -> str:
     return owner
 
 
-def create_mini_router(get_store) -> APIRouter:
+NOT_FOUND_MESSAGE = "เปิดผลตรวจนี้ไม่ได้ เคสอาจถูกลบหรือไม่ใช่เคสของคุณ"
+UNAVAILABLE_MESSAGE = "ระบบประวัติขัดข้อง กรุณาลองใหม่ภายหลัง"
+
+
+def create_mini_router(history) -> APIRouter:
+    """history: โมดูล mini_history หรือของจำลองที่มี list_cases/get_case/delete_all."""
     router = APIRouter(prefix="/api/mini", tags=["Mini App"])
+
+    def ask_history(action):
+        # ระบบประวัติล่มตอบ 503 ข้อความกลาง ไม่ส่งรายละเอียด error กลับ
+        try:
+            return action()
+        except history.HistoryUnavailable:
+            raise mini_error(503, UNAVAILABLE_MESSAGE) from None
+
+    @router.get("/history")
+    def read_history(authorization: str = Header(default="")):
+        owner = verify_line_owner(authorization)
+        cases = ask_history(lambda: history.list_cases(owner))
+        return JSONResponse({"cases": cases}, headers=PRIVATE_HEADERS)
+
+    @router.delete("/history")
+    def delete_history(authorization: str = Header(default="")):
+        owner = verify_line_owner(authorization)
+        deleted = ask_history(lambda: history.delete_all(owner))
+        return JSONResponse({"deleted": deleted}, headers=PRIVATE_HEADERS)
 
     @router.get("/cases/{case_id}")
     def read_case(case_id: str, authorization: str = Header(default="")):
         owner = verify_line_owner(authorization)
         if not re.fullmatch(r"[0-9a-f]{32}", case_id):
-            raise mini_error(404, "เปิดผลตรวจนี้ไม่ได้ เคสอาจหมดอายุหรือไม่ใช่เคสของคุณ")
-        detail = get_store().get_detail(case_id, owner)
+            raise mini_error(404, NOT_FOUND_MESSAGE)
+        detail = ask_history(lambda: history.get_case(case_id, owner))
         if detail is None:
-            # คำตอบเหมือนกันสำหรับรหัสผิด หมดอายุ รีสตาร์ต หรือผิดเจ้าของ
-            raise mini_error(404, "เปิดผลตรวจนี้ไม่ได้ เคสอาจหมดอายุหรือไม่ใช่เคสของคุณ")
+            # คำตอบเหมือนกันสำหรับรหัสที่ไม่มี ถูกลบ หรือผิดเจ้าของ
+            raise mini_error(404, NOT_FOUND_MESSAGE)
         return JSONResponse(detail, headers=PRIVATE_HEADERS)
 
     return router

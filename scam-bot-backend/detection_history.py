@@ -1,5 +1,6 @@
 """Persist one LINE text event for the dashboard without logging secrets."""
 from datetime import datetime, timezone
+import uuid
 
 from supabase import create_client
 from supabase.client import ClientOptions
@@ -132,8 +133,13 @@ def save_group_leave(event):
         return False
 
 
-def save_detection(event, result, *, warning_attempted=False, warning_sent=None):
-    """Insert once by LINE event ID. Never update an earlier result on redelivery."""
+def save_detection(event, result, *, warning_attempted=False, warning_sent=None,
+                   case_id=None, image_text=None):
+    """Insert once by LINE event ID. Never update an earlier result on redelivery.
+
+    case_id: รหัส 32 ตัวที่อยู่ในลิงก์การ์ด ใช้เป็น id ของแถวให้ Mini App เปิดเคสนี้ได้
+    image_text: ข้อความ OCR ของรูป (ส่งมาเฉพาะแชตส่วนตัว)
+    """
     kind, line_source_id = _source(event)
     if not line_source_id:
         log("[HISTORY ERROR] stage=source missing_id")
@@ -150,7 +156,8 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None)
         }, on_conflict="line_source_id").execute()
         source_id = source_response.data[0]["id"]
         if getattr(event.message, "type", None) == "image":
-            text = "[รูปภาพ]"
+            ocr = " ".join(image_text.split()) if isinstance(image_text, str) else ""
+            text = f"[รูปภาพ] {ocr}" if ocr else "[รูปภาพ]"
         else:
             text = event.message.text
             
@@ -176,6 +183,8 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None)
             "warning_sent": warning_sent,
             "error_stage": result.get("error_stage"),
         }
+        if case_id:
+            row["id"] = str(uuid.UUID(case_id))
         stage = "detection_logs"
         db.table("detection_logs").upsert(
             row, on_conflict="line_event_id", ignore_duplicates=True,

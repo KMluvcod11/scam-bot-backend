@@ -57,7 +57,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.module.analyze_message.return_value, result("risk_found"))
         self.module.analyze_message.return_value = result("no_risk_found")
         await self.post_events([private_event("เริ่มงานได้ทันที ไม่มีค่าสมัคร", 3)])
-        self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
+        self.assertNotIn("learn_case_id", self.module.reply_to_line.call_args.kwargs)
 
     async def test_owner_mismatch_unknown_and_expired_do_not_disclose(self):
         now = [0]
@@ -123,9 +123,14 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
             self.module.analyze_message.return_value = result(status)
             response = await self.post_events([private_event(text, number)])
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
+            # ผลไม่เสี่ยง: ได้การ์ดและเคสสำหรับ Mini App แต่ไม่มีบทเรียนในแชต
+            kwargs = self.module.reply_to_line.call_args.kwargs
+            self.assertNotIn("learn_case_id", kwargs)
+            self.assertIn("card", kwargs)
             self.assertEqual(self.module.reply_to_line.call_args.args[1],
                              self.module.private_reply(result(status), text))
+            # เคสอยู่ในฐานข้อมูล (ผ่าน case_id) ไม่เก็บบทเรียนลง RAM
+            self.assertRegex(self.module.save_detection.call_args.kwargs["case_id"], r"^[0-9a-f]{32}$")
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
     async def test_group_warning_stays_text_only(self):
@@ -138,7 +143,10 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.module.lesson_store = self.module.LessonStore(max_entries=1)
         first = await self.create_case()
         await self.post_events([private_event(number=2)])
-        self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
+        # ที่เก็บเต็ม: ยังส่งการ์ดผลตรวจได้ แต่ไม่มีปุ่มเปิดเคส
+        kwargs = self.module.reply_to_line.call_args.kwargs
+        self.assertNotIn("learn_case_id", kwargs)
+        self.assertNotIn("footer", kwargs["card"]["contents"])
         self.assertIn("พบสัญญาณเสี่ยง", self.module.reply_to_line.call_args.args[1])
         self.assertIsNotNone(self.module.lesson_store.get(first, "offline-user"))
         with patch.object(self.module, "build_lesson", side_effect=ValueError("SECRET")):
@@ -151,7 +159,9 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.return_value = result("risk_found")
         response = await self.post_events([event])
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
+        kwargs = self.module.reply_to_line.call_args.kwargs
+        self.assertNotIn("learn_case_id", kwargs)
+        self.assertNotIn("footer", kwargs["card"]["contents"])
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
     async def test_restart_invalidates_old_button(self):
@@ -167,6 +177,74 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         response = await self.post_events([postback(case_id, 10), postback(case_id, 11)])
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.module.reply_to_line.call_count, 2)
+
+
+class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
+    asyncSetUp = fixtures.WebhookThreadpoolTests.asyncSetUp
+    asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
+    post_events = fixtures.WebhookThreadpoolTests.post_events
+
+    async def test_text_result_sends_card_and_opens_case_for_every_status(self):
+        titles = {"risk_found": "พบสัญญาณเสี่ยง", "uncertain": "ควรตรวจเพิ่ม", "no_risk_found": "ยังไม่พบสัญญาณเสี่ยง"}
+        for number, (status, title) in enumerate(titles.items(), 1):
+            with self.subTest(status=status):
+                self.module.analyze_message.return_value = result(status)
+                await self.post_events([private_event("นัดรับของรางวัล", number)])
+                kwargs = self.module.reply_to_line.call_args.kwargs
+                self.assertIn(title, kwargs["card"]["altText"])
+                saved = self.module.save_detection.call_args
+                self.assertEqual(saved.args[1]["status"], status)
+                self.assertRegex(saved.kwargs["case_id"], r"^[0-9a-f]{32}$")
+
+    async def test_private_image_gets_card_with_ocr_text_case(self):
+        event = fixtures.image_event(1)
+        event["source"] = {"type": "user", "userId": "offline-user"}
+        with patch.object(self.module, "analyze_with_llm", return_value=result("risk_found")):
+            await self.post_events([event])
+        token, reply = self.module.reply_to_line.call_args.args
+        card = self.module.reply_to_line.call_args.kwargs["card"]
+        self.assertIn("ตรวจจากรูปภาพ", str(card))
+        self.assertIn("พบสัญญาณเสี่ยง", reply)
+        self.assertIn("ข้อความในรูป:", str(card))
+
+    async def test_card_link_and_saved_row_share_case_id(self):
+        self.module.analyze_message.return_value = result("uncertain")
+        with patch.dict(os.environ, {"MINI_LIFF_ID": "1234567890-TestApp", "LINE_LOGIN_CHANNEL_ID": "1234567890"}):
+            await self.post_events([private_event("นัดรับของรางวัล", 7)])
+        card = self.module.reply_to_line.call_args.kwargs["card"]
+        uri = card["contents"]["footer"]["contents"][0]["action"]["uri"]
+        saved_case = self.module.save_detection.call_args.kwargs["case_id"]
+        self.assertRegex(saved_case, r"^[0-9a-f]{32}$")
+        self.assertTrue(uri.endswith("case=" + saved_case))
+
+    def test_redelivered_event_gets_same_case_id(self):
+        first = self.module.case_id_for("line-event-1")
+        self.assertEqual(first, self.module.case_id_for("line-event-1"))
+        self.assertNotEqual(first, self.module.case_id_for("line-event-2"))
+        self.assertRegex(first, r"^[0-9a-f]{32}$")
+
+    async def test_private_image_saves_ocr_text_and_case_id(self):
+        event = fixtures.image_event(3)
+        event["source"] = {"type": "user", "userId": "offline-user"}
+        with patch.object(self.module, "analyze_with_llm", return_value=result("risk_found")):
+            await self.post_events([event])
+        kwargs = self.module.save_detection.call_args.kwargs
+        self.assertEqual(kwargs["image_text"], self.module.extract_text_from_image.return_value["text"])
+        self.assertRegex(kwargs["case_id"], r"^[0-9a-f]{32}$")
+
+    async def test_no_case_id_for_group_messages(self):
+        self.module.analyze_message.return_value = result("risk_found")
+        await self.post_events([fixtures.text_event("โอนเงินด่วน", 8)])
+        if self.module.save_detection.called:
+            self.assertNotIn("case_id", self.module.save_detection.call_args.kwargs)
+
+    async def test_group_image_warning_stays_plain_text(self):
+        event = fixtures.image_event(2)
+        with patch.object(self.module, "analyze_with_llm", return_value=result("risk_found")):
+            await self.post_events([event])
+        if self.module.reply_to_line.called:
+            self.assertNotIn("card", self.module.reply_to_line.call_args.kwargs)
+        self.assertEqual(len(self.module.lesson_store._cases), 0)
 
 
 class LearningPayloadTests(unittest.TestCase):

@@ -20,6 +20,12 @@ def result(status):
             "risk_level": "medium" if status == "risk_found" else "low", "reason": "เหตุผลทดสอบ"}
 
 
+def warning_kwargs(save_mock):
+    """เช็กเฉพาะผลการแจ้งเตือน; แชตส่วนตัวมี case_id/image_text เพิ่มซึ่งเทสต์อื่นตรวจแยก."""
+    kwargs = save_mock.call_args.kwargs
+    return {key: kwargs[key] for key in ("warning_attempted", "warning_sent") if key in kwargs}
+
+
 class PrivateDetectionTests(unittest.TestCase):
     def setUp(self):
         self.d = load_detector()
@@ -270,7 +276,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ยังไม่พบสัญญาณหลอกลวงชัดเจน", reply)
         self.assertIn("ไม่รับรองว่าปลอดภัย", reply)
         self.module.save_detection.assert_called_once()
-        self.assertEqual(self.module.save_detection.call_args.kwargs, {
+        self.assertEqual(warning_kwargs(self.module.save_detection), {
             "warning_attempted": True, "warning_sent": True,
         })
 
@@ -301,7 +307,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertNotIn("ยังตรวจรูปภาพ", reply)
                 self.module.save_detection.assert_called_once()
                 self.assertEqual(self.module.save_detection.call_args.args[1]["status"], status)
-                self.assertEqual(self.module.save_detection.call_args.kwargs, {
+                self.assertEqual(warning_kwargs(self.module.save_detection), {
                     "warning_attempted": True, "warning_sent": True,
                 })
         self.module.analyze_message.assert_not_called()
@@ -339,7 +345,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 saved_result = self.module.save_detection.call_args.args[1]
                 self.assertEqual(saved_result["status"],
                                  "uncertain" if isinstance(failure, dict) and failure.get("status") == "uncertain" else "error")
-                self.assertEqual(self.module.save_detection.call_args.kwargs, {
+                self.assertEqual(warning_kwargs(self.module.save_detection), {
                     "warning_attempted": True, "warning_sent": True,
                 })
         self.module.analyze_message.assert_not_called()
@@ -361,9 +367,12 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.module.analyze_message.assert_called_once_with("ข้อความถัดไป", private=True)
                 self.assertNotIn("SECRET_SEND", str(logs.call_args_list))
                 self.assertEqual(self.module.save_detection.call_count, 2)
-                self.assertEqual(self.module.save_detection.call_args_list[0].kwargs, {
-                    "warning_attempted": True, "warning_sent": False,
-                })
+                saved = self.module.save_detection.call_args_list[0].kwargs
+                self.assertEqual({key: saved[key] for key in ("warning_attempted", "warning_sent")},
+                                 {"warning_attempted": True, "warning_sent": False})
+                # แชตส่วนตัวเก็บข้อความ OCR และรหัสเคสไว้ให้หน้าประวัติ แม้ส่งคำตอบไม่สำเร็จ
+                self.assertIn("image_text", saved)
+                self.assertRegex(saved["case_id"], r"^[0-9a-f]{32}$")
 
     async def test_private_image_requires_identity_before_work(self):
         event = private_event()

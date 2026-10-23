@@ -53,19 +53,39 @@ def build_lesson(text: str, result: dict) -> str | None:
     )
 
 
+# คำแนะนำในหน้ารายละเอียด แยกตามสถานะผลตรวจ (หน้าเว็บต้องมีอย่างน้อย 1 ข้อ)
+NEXT_STEPS = {
+    "risk_found": [
+        "หยุดก่อนคลิกลิงก์ โอนเงิน หรือส่งข้อมูล แล้วติดต่อหน่วยงานผ่านช่องทางที่ค้นหาเอง",
+        "แยกคำชักชวนจริงออกจากข่าว การยกตัวอย่าง และคำเตือนภัย",
+        "หากข้อมูลไม่พอ ส่งข้อความพร้อมบริบทมาตรวจใหม่ โดยปิดบังข้อมูลส่วนตัว ไม่ส่ง OTP หรือรหัสผ่าน",
+    ],
+    "uncertain": [
+        "ตรวจกับหน่วยงานหรือผู้ส่งผ่านช่องทางทางการที่ค้นหาเอง ก่อนทำตามข้อความ",
+        "ส่งข้อความเดิมพร้อมบริบทเพิ่มเติมมาตรวจใหม่ได้ โดยปิดบังข้อมูลส่วนตัว",
+        "ถ้ามีการขอเงิน OTP หรือรหัสผ่านเพิ่มเข้ามา ให้หยุดและตรวจสอบก่อน",
+    ],
+    "no_risk_found": [
+        "ยังระวังได้ตามปกติ ผลนี้ไม่รับรองว่าปลอดภัยและไม่ได้ยืนยันตัวตนผู้ส่ง",
+        "ถ้าภายหลังมีการขอเงิน OTP หรือให้กดลิงก์ ให้ส่งข้อความนั้นมาตรวจใหม่",
+    ],
+}
+
+
 def build_case_detail(text: str, result: dict, received_at: str) -> dict:
-    """รับผลเดิมที่สร้างบทเรียนได้แล้ว จัดข้อมูลสำหรับหน้าเว็บโดยไม่เรียก AI."""
+    """รับผลเดิม 3 สถานะ (เสี่ยง/ควรตรวจเพิ่ม/ยังไม่พบ) จัดข้อมูลสำหรับหน้าเว็บโดยไม่เรียก AI."""
+    status = result["status"]
     points = lesson_points(text)
+    reason = result.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        # หน้าเว็บไม่รับเหตุผลว่าง จึงใส่ข้อความกลางแทน
+        reason = "ไม่มีเหตุผลเพิ่มเติมจากผลตรวจ"
     return {
         "title": " ".join(text.split())[:60], "category": "message", "message": text,
-        "receivedAt": received_at, "status": result["status"], "reason": result["reason"],
+        "receivedAt": received_at, "status": status, "reason": reason,
         "lessonId": points[0]["topic"],
         "warningPoints": [{key: point[key] for key in ("icon", "title", "description")} for point in points],
-        "nextSteps": [
-            "หยุดก่อนคลิกลิงก์ โอนเงิน หรือส่งข้อมูล แล้วติดต่อหน่วยงานผ่านช่องทางที่ค้นหาเอง",
-            "แยกคำชักชวนจริงออกจากข่าว การยกตัวอย่าง และคำเตือนภัย",
-            "หากข้อมูลไม่พอ ส่งข้อความพร้อมบริบทมาตรวจใหม่ โดยปิดบังข้อมูลส่วนตัว ไม่ส่ง OTP หรือรหัสผ่าน",
-        ],
+        "nextSteps": list(NEXT_STEPS[status]),
     }
 
 
@@ -84,7 +104,9 @@ class LessonStore:
         while self._cases and next(iter(self._cases.values()))[0] <= now:
             self._cases.popitem(last=False)
 
-    def add(self, owner: str, lesson: str, *, detail: dict | None = None) -> str | None:
+    def add(self, owner: str, lesson: str, *, detail: dict | None = None,
+            case_id: str | None = None) -> str | None:
+        """case_id: ใช้รหัสเดียวกับแถวใน detection_logs ถ้ามี (ไม่ส่ง = สุ่มใหม่)."""
         if not isinstance(owner, str) or not owner.strip():
             return None
         with self._lock:
@@ -92,7 +114,7 @@ class LessonStore:
             # เต็มแล้วงดปุ่มใหม่ ไม่ทิ้งเคสเก่าที่ปุ่มยังไม่หมดอายุ
             if len(self._cases) >= self.max_entries:
                 return None
-            case_id = uuid4().hex
+            case_id = case_id or uuid4().hex
             self._cases[case_id] = (self.clock() + self.ttl_seconds, owner, lesson, deepcopy(detail))
             return case_id
 
