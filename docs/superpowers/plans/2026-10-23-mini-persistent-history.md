@@ -194,7 +194,7 @@ test('miniHref detail ใช้รหัสที่ส่งมา', ...)
 
 **Files:**
 - Modify: `Scam-bot-frontend/src/mini/pages/MiniSettings.tsx`, `src/mini/pages/MiniHelp.tsx`
-- Modify docs: `src/mini/README.md`, `src/mini/LIVE_CASES.md`, `scam-bot-backend/MINI_SETUP.md`
+- Modify docs: `src/mini/README.md`, `src/mini/LIVE_CASES.md`, `docs/backend/MINI_SETUP.md`
 - Test: `Scam-bot-frontend/tests/mini.test.mjs`
 
 **Interfaces:**

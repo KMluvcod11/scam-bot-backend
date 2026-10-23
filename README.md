@@ -100,4 +100,4 @@ For existing LINE groups whose dashboard member count is "ไม่ระบุ"
 - Detection history includes message text and source identifiers. Restrict access according to the data contract and use synthetic data in public demos.
 - Application logs keep trace IDs, timings, status, similarity and labels, but no longer print submitted messages, matched dataset text or LLM reasons. This does not redact existing logs or database history.
 
-Implementation notes in Thai: [Webhook stability](scam-bot-backend/STABILITY.md) · [Learning cards](scam-bot-backend/LEARNING.md).
+Documentation: [Index](docs/README.md) · [Webhook stability](docs/backend/STABILITY.md) · [Learning cards](docs/backend/LEARNING.md).
