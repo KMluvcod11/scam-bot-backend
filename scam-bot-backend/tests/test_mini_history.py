@@ -52,6 +52,19 @@ class MiniHistoryTests(unittest.TestCase):
         }])
         self.assertNotIn("message", items[0])
 
+    def test_list_category_is_link_when_message_has_url(self):
+        rows = [row(message_text="กดรับเงินที่ https://bit.ly/abc"),
+                row(message_text="เข้า WWW.example.com ด่วน"),
+                row(message_text="โอนค่ามัดจำมาก่อนนะ")]
+        with self.use(fake_client(rows)):
+            items = mini_history.list_cases("U1")
+        self.assertEqual([item["category"] for item in items], ["link", "link", "message"])
+
+    def test_get_case_category_is_link_when_message_has_url(self):
+        with self.use(fake_client([row(message_text="ยืนยันบัญชีที่ http://fake-bank.co")])):
+            detail = mini_history.get_case(HEX, "U1")
+        self.assertEqual(detail["category"], "link")
+
     def test_list_empty_history_returns_empty_list(self):
         with self.use(fake_client([])):
             self.assertEqual(mini_history.list_cases("U1"), [])

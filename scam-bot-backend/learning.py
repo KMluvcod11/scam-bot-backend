@@ -1,9 +1,21 @@
 """บทเรียนในแชต: ใช้ผลตรวจเดิม ไม่เรียก AI และไม่เพิ่มข้อมูลลง Dataset."""
 from collections import OrderedDict
 from copy import deepcopy
+import re
 from threading import Lock
 from time import monotonic
 from uuid import uuid4
+
+
+# จับเฉพาะรูปแบบลิงก์ที่ชัดเจน (http://, https://, www.) เพื่อไม่ให้ข้อความทั่วไปที่มีจุดถูกนับเป็นลิงก์
+URL_PATTERN = re.compile(r"https?://|www\.", re.IGNORECASE)
+
+
+def case_category(text: str) -> str:
+    """แยกประเภทเคสให้หน้า Mini App: มีลิงก์ = 'link', ไม่มี = 'message' (ไม่ได้ตัดสินความเสี่ยง)."""
+    if URL_PATTERN.search(text):
+        return "link"
+    return "message"
 
 
 def lesson_points(text: str) -> list[dict]:
@@ -81,7 +93,7 @@ def build_case_detail(text: str, result: dict, received_at: str) -> dict:
         # หน้าเว็บไม่รับเหตุผลว่าง จึงใส่ข้อความกลางแทน
         reason = "ไม่มีเหตุผลเพิ่มเติมจากผลตรวจ"
     return {
-        "title": " ".join(text.split())[:60], "category": "message", "message": text,
+        "title": " ".join(text.split())[:60], "category": case_category(text), "message": text,
         "receivedAt": received_at, "status": status, "reason": reason,
         "lessonId": points[0]["topic"],
         "warningPoints": [{key: point[key] for key in ("icon", "title", "description")} for point in points],

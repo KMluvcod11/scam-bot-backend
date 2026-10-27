@@ -5,7 +5,7 @@ owner คือ sub ที่ verify_line_owner() ยืนยันกับ LI
 import re
 import uuid
 
-from learning import build_case_detail
+from learning import build_case_detail, case_category
 
 TABLE = "detection_logs"
 VISIBLE_STATUSES = ["risk_found", "uncertain", "no_risk_found"]
@@ -47,7 +47,7 @@ def list_cases(owner: str, limit: int = 50) -> list[dict]:
     return [{
         "id": uuid.UUID(str(item["id"])).hex,
         "title": _short_title(item["message_text"]),
-        "category": "message",
+        "category": case_category(item["message_text"]),
         "receivedAt": item["received_at"],
         "status": item["detection_status"],
     } for item in rows]
