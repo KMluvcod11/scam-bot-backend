@@ -27,7 +27,7 @@ from linebot.v3.webhooks import (
     ImageMessageContent,
 )
 from config import LINE_CHANNEL_SECRET
-from detector import analyze_message, analyze_with_llm, extract_text_from_image, find_similarity
+from detector import analyze_message, extract_text_from_image
 from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
@@ -303,54 +303,34 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                     "reason": "อ่านข้อความในรูปได้ไม่ชัดเจน หรือไม่พบข้อความให้ประเมิน",
                 }
 
-
             if ocr_result["status"] == "ok":
                 ocr_text = ocr_result["text"]
                 # เปิดเฉพาะตอนทดสอบในเครื่อง เพราะข้อความอาจมีข้อมูลส่วนตัว
                 if os.getenv("DEBUG_OCR_TEXT") == "1":
-                    print("[OCR DEBUG] text=" + json.dumps(ocr_result["text"], ensure_ascii=False))
+                    print("[OCR DEBUG] text=" + json.dumps(ocr_text, ensure_ascii=False))
                 try:
-                    similarity, matched_label, matched_text = await run_in_threadpool(
-                        find_similarity,
-                        ocr_result["text"],
+                    image_result = await run_in_threadpool(
+                        timed_call,
+                        "image_analysis",
+                        analyze_message,
+                        ocr_text,
+                        private=True,
                     )
                 except Exception as error:
                     print(
-                        f"[IMAGE MATCH ERROR] "
+                        f"[IMAGE ANALYSIS ERROR] "
                         f"type={type(error).__name__}"
                     )
-                else:
-                    print(
-                        f"[IMAGE MATCH] similarity={similarity:.2f}% "
-                        f"label={matched_label}"
-                    )
-                    try:
-                        image_result = await run_in_threadpool(
-                            timed_call,
-                            "image_analysis",
-                            analyze_with_llm,
-                            ocr_result["text"],
-                            similarity,
-                            matched_label,
-                            matched_text=matched_text,
-                            private=True,
-                        )
+                    image_result = {
+                        "status": "error",
+                        "is_scam": None,
+                        "error_stage": "analysis",
+                    }
 
-                    except Exception as error:
-                        print(
-                            f"[IMAGE ANALYSIS ERROR] "
-                            f"type={type(error).__name__}"
-                        )
-                        image_result = {
-                            "status": "error",
-                            "is_scam": None,
-                            "error_stage": "analysis",
-                        }
-
-                    print(
-                            f"[IMAGE RESULT] "
-                            f"status={image_result.get('status','error')} "
-                        )
+                print(
+                    f"[IMAGE RESULT] "
+                    f"status={image_result.get('status', 'error')}"
+                )
                     
 
         should_reply = (

@@ -7,6 +7,8 @@ from types import ModuleType, SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import google
+
 
 def load_detector():
     """แทนที่ dependency ตอน import เพื่อไม่สร้าง client จริงหรืออ่าน secret."""
@@ -15,28 +17,37 @@ def load_detector():
         "GEMINI_KEY": "test", "SUPABASE_URL": "test", "SUPABASE_KEY": "test",
         "SAFE_WORDS": set(), "SCAM_TRIGGERS": [],
         "VECTOR_MATCH_THRESHOLD": 0.65, "DIRECT_SCAM_THRESHOLD": 92.0,
+        "SAFE_BROWSING_API_KEY": "offline-test-key",
     }.items():
         setattr(config, name, value)
-    google = ModuleType("google")
     genai = ModuleType("google.genai")
     genai.Client = Mock(return_value=Mock())
     genai.types = SimpleNamespace(
         HttpOptions=lambda **kw: kw, HttpRetryOptions=lambda **kw: kw,
         GenerateContentConfig=lambda **kw: kw, EmbedContentConfig=lambda **kw: kw,
     )
-    google.genai = genai
     supabase = ModuleType("supabase")
     supabase.create_client = Mock(return_value=Mock())
     supabase_client = ModuleType("supabase.client")
     supabase_client.ClientOptions = lambda **kw: kw
     path = Path(__file__).resolve().parents[1] / "detector.py"
+    url_spec = importlib.util.spec_from_file_location(
+        "url_checker_under_test", path.with_name("url_checker.py"),
+    )
+    url_checker = importlib.util.module_from_spec(url_spec)
     spec = importlib.util.spec_from_file_location("detector_under_test", path)
     module = importlib.util.module_from_spec(spec)
     with patch.dict(sys.modules, {
-        "config": config, "google": google, "google.genai": genai,
+        "config": config, "google.genai": genai,
         "supabase": supabase, "supabase.client": supabase_client,
-    }), patch.object(sys, "path", [str(path.parent), *sys.path]):
-        spec.loader.exec_module(module)
+    }), patch.object(google, "genai", genai, create=True), patch.object(
+        sys, "path", [str(path.parent), *sys.path],
+    ):
+        url_spec.loader.exec_module(url_checker)
+        # ใช้ตัวดึงลิงก์จริง แต่แทนการตรวจ Google เพื่อไม่ออกเครือข่ายใน tests
+        url_checker.check_url = Mock(return_value={"status": "not_found", "threat_types": []})
+        with patch.dict(sys.modules, {"url_checker": url_checker}):
+            spec.loader.exec_module(module)
     return module
 
 

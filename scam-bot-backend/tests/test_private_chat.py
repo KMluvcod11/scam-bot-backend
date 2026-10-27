@@ -3,7 +3,7 @@ import json
 import os
 from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import test_webhook_threadpool as fixtures
 from test_llm_validation import load_detector
@@ -219,7 +219,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 else:
                     self.assertEqual(debug_lines, [])
                     self.assertNotIn("ข้อความทดสอบส่วนตัว", str(logs.call_args_list))
-                self.module.analyze_with_llm.assert_called_with(text, 87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True)
+                self.module.analyze_message.assert_called_with(text, private=True)
 
     async def test_private_log_contains_metadata_not_message(self):
         text = "สวัสดีครับ\nข้อความทดสอบ"
@@ -270,9 +270,10 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         event["message"] = {"type": "image", "id": "1", "contentProvider": {"type": "line"}, "quoteToken": "offline"}
         response = await self.post_events([event, event])
         self.assertEqual(response.status_code, 200)
-        self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_called_once()
-        self.module.analyze_with_llm.assert_called_once()
+        self.module.analyze_message.assert_called_once_with(
+            self.module.extract_text_from_image.return_value["text"], private=True,
+        )
         reply = self.module.reply_to_line.call_args.args[1]
         self.assertIn("ข้อความที่อ่านได้ในรูป", reply)
         self.assertIn("ยังไม่พบสัญญาณหลอกลวงชัดเจน", reply)
@@ -281,6 +282,63 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(warning_kwargs(self.module.save_detection), {
             "warning_attempted": True, "warning_sent": True,
         })
+
+    async def test_image_urls_use_shared_detection_before_reply_and_history(self):
+        detector = load_detector()
+        self.module.analyze_message.side_effect = detector.analyze_message
+        normal_result = result("no_risk_found")
+        cases = (
+            ("matched", "https://a.test/?token=SECRET", "risk_found", 1),
+            ("not_found", "https://a.test https://a.test", "no_risk_found", 1),
+            ("error", "https://a.test", "error", 1),
+            ("not_found", "https://a.test https://b.test https://c.test https://d.test", "uncertain", 3),
+            (None, "สวัสดี", "conversation", 0),
+        )
+        number = 0
+        for source in ("user", "group", "room"):
+            for url_status, text, expected_status, checks in cases:
+                number += 1
+                with self.subTest(source=source, status=expected_status):
+                    self.module.analyze_message.reset_mock()
+                    self.module.reply_to_line.reset_mock()
+                    self.module.save_detection.reset_mock()
+                    detector.check_url.reset_mock()
+                    detector.check_url.return_value = {
+                        "status": url_status,
+                        "threat_types": ["MALWARE"] if url_status == "matched" else [],
+                    }
+                    self.module.extract_text_from_image.return_value = {"status": "ok", "text": text}
+                    event = fixtures.image_event(number)
+                    event["source"] = {"type": source, "userId": "offline-user"}
+                    if source != "user":
+                        event["source"][source + "Id"] = "offline-chat"
+
+                    with patch.object(detector, "find_similarity", return_value=(0.0, None, "")) as lookup, patch.object(
+                        detector, "analyze_with_llm", return_value=normal_result,
+                    ) as analyze, patch.dict(os.environ, {"DEBUG_OCR_TEXT": "0"}), patch("builtins.print") as logs:
+                        response = await self.post_events([event, event])
+
+                    self.assertEqual(response.status_code, 200)
+                    self.module.analyze_message.assert_called_once_with(text, private=True)
+                    self.assertEqual(detector.check_url.call_count, checks)
+                    if expected_status == "no_risk_found":
+                        lookup.assert_called_once_with(text)
+                        analyze.assert_called_once_with(text, 0.0, None, matched_text="", private=True)
+                    else:
+                        lookup.assert_not_called()
+                        analyze.assert_not_called()
+                    should_reply = source == "user" or expected_status == "risk_found"
+                    self.assertEqual(self.module.reply_to_line.call_count, int(should_reply))
+                    self.module.save_detection.assert_called_once()
+                    saved = self.module.save_detection.call_args
+                    self.assertEqual(saved.args[1]["status"], expected_status)
+                    self.assertEqual(warning_kwargs(self.module.save_detection), {
+                        "warning_attempted": should_reply,
+                        "warning_sent": True if should_reply else None,
+                    })
+                    if source == "user":
+                        self.assertEqual(saved.kwargs["image_text"], text)
+                    self.assertNotIn("SECRET", str(logs.call_args_list))
 
     async def test_private_image_returns_each_analysis_status(self):
         cases = (
@@ -295,12 +353,12 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.module.save_detection.reset_mock()
                 event = fixtures.image_event(number)
                 event["source"] = {"type": "user", "userId": "offline-user"}
-                with patch.object(self.module, "analyze_with_llm", return_value=result(status)) as analyze:
+                with patch.object(self.module, "analyze_message", return_value=result(status)) as analyze:
                     response = await self.post_events([event, event])
                 self.assertEqual(response.status_code, 200)
                 analyze.assert_called_once_with(
                     self.module.extract_text_from_image.return_value["text"],
-                    87.5, "spam", matched_text="SECRET_DATASET_EXAMPLE", private=True,
+                    private=True,
                 )
                 self.module.reply_to_line.assert_called_once()
                 token, reply = self.module.reply_to_line.call_args.args
@@ -312,7 +370,6 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(warning_kwargs(self.module.save_detection), {
                     "warning_attempted": True, "warning_sent": True,
                 })
-        self.module.analyze_message.assert_not_called()
 
     async def test_private_image_failures_reply_once_with_retry_or_clarity_request(self):
         cases = (
@@ -321,9 +378,8 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
             ("extract_text_from_image", {"status": "uncertain", "text": ""}),
             ("extract_text_from_image", {"status": "error", "text": ""}),
             ("extract_text_from_image", RuntimeError("SECRET_OCR")),
-            ("find_similarity", RuntimeError("SECRET_DATASET")),
-            ("analyze_with_llm", {"status": "error", "is_scam": None}),
-            ("analyze_with_llm", RuntimeError("SECRET_ANALYSIS")),
+            ("analyze_message", {"status": "error", "is_scam": None}),
+            ("analyze_message", RuntimeError("SECRET_ANALYSIS")),
         )
         for number, (stage, failure) in enumerate(cases, start=1):
             with self.subTest(stage=stage, failure=failure):
@@ -366,7 +422,10 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((first.status_code, duplicate.status_code), (200, 200))
                 self.assertEqual(reply.call_count, 2)
                 self.assertEqual([call.args[0] for call in reply.call_args_list], [item["replyToken"] for item in events])
-                self.module.analyze_message.assert_called_once_with("ข้อความถัดไป", private=True)
+                self.assertEqual(self.module.analyze_message.call_args_list, [
+                    call(self.module.extract_text_from_image.return_value["text"], private=True),
+                    call("ข้อความถัดไป", private=True),
+                ])
                 self.assertNotIn("SECRET_SEND", str(logs.call_args_list))
                 self.assertEqual(self.module.save_detection.call_count, 2)
                 saved = self.module.save_detection.call_args_list[0].kwargs

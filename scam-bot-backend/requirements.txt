@@ -5,4 +5,5 @@ google-genai
 supabase
 python-dotenv
 requests
+protobuf
 line-bot-sdk

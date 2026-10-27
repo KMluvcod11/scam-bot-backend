@@ -199,7 +199,7 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_image_gets_card_with_ocr_text_case(self):
         event = fixtures.image_event(1)
         event["source"] = {"type": "user", "userId": "offline-user"}
-        with patch.object(self.module, "analyze_with_llm", return_value=result("risk_found")):
+        with patch.object(self.module, "analyze_message", return_value=result("risk_found")):
             await self.post_events([event])
         token, reply = self.module.reply_to_line.call_args.args
         card = self.module.reply_to_line.call_args.kwargs["card"]
@@ -226,7 +226,7 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
     async def test_private_image_saves_ocr_text_and_case_id(self):
         event = fixtures.image_event(3)
         event["source"] = {"type": "user", "userId": "offline-user"}
-        with patch.object(self.module, "analyze_with_llm", return_value=result("risk_found")):
+        with patch.object(self.module, "analyze_message", return_value=result("risk_found")):
             await self.post_events([event])
         kwargs = self.module.save_detection.call_args.kwargs
         self.assertEqual(kwargs["image_text"], self.module.extract_text_from_image.return_value["text"])
@@ -240,7 +240,7 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_image_warning_stays_plain_text(self):
         event = fixtures.image_event(2)
-        with patch.object(self.module, "analyze_with_llm", return_value=result("risk_found")):
+        with patch.object(self.module, "analyze_message", return_value=result("risk_found")):
             await self.post_events([event])
         if self.module.reply_to_line.called:
             self.assertNotIn("card", self.module.reply_to_line.call_args.kwargs)

@@ -26,9 +26,8 @@ def load_app():
     config = ModuleType("config")
     config.LINE_CHANNEL_SECRET = "offline-test-secret"
     detector = ModuleType("detector")
-    detector.analyze_message = Mock(return_value={"is_scam": False})
-    detector.analyze_with_llm = Mock(
-        spec=lambda text, similarity_percent, matched_label=None, *, matched_text="", private=False: None,
+    detector.analyze_message = Mock(
+        spec=lambda text, *, private=False: None,
         return_value={
             "status": "no_risk_found", "is_scam": False,
             "risk_level": "low", "reason": "เหตุผลทดสอบ",
@@ -37,10 +36,6 @@ def load_app():
     detector.extract_text_from_image = Mock(
         spec=lambda image_bytes, mime_type: None,
         return_value={"status": "ok", "text": "ข้อความจากรูปสำหรับทดสอบ"}
-    )
-    detector.find_similarity = Mock(
-        spec=lambda text: None,
-        return_value=(87.5, "spam", "SECRET_DATASET_EXAMPLE"),
     )
     messaging = ModuleType("messaging")
     messaging.reply_to_line = Mock(return_value=True)
@@ -265,7 +260,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             ["first", "second"],
         )
 
-    async def test_group_image_and_empty_events_do_not_analyze(self):
+    async def test_empty_events_skip_analysis_and_group_image_uses_ocr_text(self):
         event = text_event()
         event["message"] = {
             "type": "image",
@@ -276,7 +271,9 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         for events in ([], [event]):
             response = await self.post_events(events)
             self.assertEqual(response.status_code, 200)
-        self.module.analyze_message.assert_not_called()
+        self.module.analyze_message.assert_called_once_with(
+            self.module.extract_text_from_image.return_value["text"], private=True,
+        )
         self.module.reply_to_line.assert_not_called()
 
     async def test_invalid_signature_still_returns_400(self):

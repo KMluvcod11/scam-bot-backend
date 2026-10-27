@@ -1,4 +1,4 @@
-"""ทดสอบการตรวจ URL และ cache ในเครื่อง ไม่อ่านคีย์หรือเรียกบริการภายนอก."""
+"""ทดสอบการดึงและตรวจ URL และ cache ในเครื่อง ไม่อ่านคีย์หรือเรียกบริการภายนอก."""
 import importlib.util
 from pathlib import Path
 import sys
@@ -15,7 +15,10 @@ class URLValidationTests(unittest.TestCase):
         cls.checker = importlib.util.module_from_spec(spec)
         config = ModuleType("config")
         config.SAFE_BROWSING_API_KEY = "offline-test-key"
-        with patch.dict(sys.modules, {"config": config}):
+        with patch.dict(sys.modules, {"config": config}), patch.object(
+            sys, "path", [str(path.parent), *sys.path],
+        ):
+            cls.protocol = importlib.import_module("safe_browsing_proto")
             spec.loader.exec_module(cls.checker)
 
     def setUp(self):
@@ -29,6 +32,45 @@ class URLValidationTests(unittest.TestCase):
             self.checker.requests, "get",
             side_effect=AssertionError("External HTTP is forbidden in offline tests"),
         ))
+
+    def test_extract_returns_empty_list_without_http_urls(self):
+        self.assertEqual(
+            self.checker.extract_urls("ข้อความทั่วไป www.example.com ftp://example.com"),
+            [],
+        )
+
+    def test_extract_preserves_protocol_case_path_query_and_fragment(self):
+        self.assertEqual(
+            self.checker.extract_urls(
+                "ดู http://example.com/Page และ HTTPS://Example.org/Path?q=Ab#Section"
+            ),
+            ["http://example.com/Page", "HTTPS://Example.org/Path?q=Ab#Section"],
+        )
+
+    def test_extract_deduplicates_urls_preserving_order(self):
+        self.assertEqual(
+            self.checker.extract_urls(
+                "https://example.org/b https://example.com/a https://example.org/b"
+            ),
+            ["https://example.org/b", "https://example.com/a"],
+        )
+
+    def test_extract_stops_at_whitespace_angle_brackets_and_quotes(self):
+        self.assertEqual(
+            self.checker.extract_urls(
+                'ลิงก์ <https://example.com/a> "http://example.org/b"\n'
+                '“https://example.net/c”\thttps://example.edu/d จบ'
+            ),
+            [
+                "https://example.com/a", "http://example.org/b",
+                "https://example.net/c", "https://example.edu/d",
+            ],
+        )
+
+    def test_extract_rejects_nonstring_input(self):
+        for value in (None, False, 123, [], {}, b"https://example.com"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                self.checker.extract_urls(value)
 
     def test_http_https_paths_queries_and_ports(self):
         cases = (
@@ -175,10 +217,11 @@ class URLValidationTests(unittest.TestCase):
         with patch.object(self.checker.requests, "get") as get:
             response = get.return_value.__enter__.return_value
             response.status_code = 200
-            response.json.return_value = {
-                "cacheDuration": "300s",
-                "threats": [{"url": "https://example.com/", "threatTypes": ["MALWARE"]}],
-            }
+            message = self.protocol.SearchUrlsResponse()
+            message.cache_duration.seconds = 300
+            message.threats.add(url="https://example.com/", threat_types=[1])
+            response.content = message.SerializeToString()
+            response.json.side_effect = AssertionError("Successful V5 replies are Protobuf")
 
             result, seconds = self.checker._request_safe_browsing(
                 " https://example.com/page?q=1#section "
@@ -191,14 +234,15 @@ class URLValidationTests(unittest.TestCase):
                 params={"key": "offline-test-key", "urls": "https://example.com/page?q=1"},
                 timeout=(5, 10), allow_redirects=False,
             )
-            response.json.assert_called_once()
+            response.json.assert_not_called()
             get.return_value.__exit__.assert_called_once()
 
     def test_request_returns_no_match_with_cache_duration(self):
         with patch.object(self.checker.requests, "get") as get:
             response = get.return_value.__enter__.return_value
             response.status_code = 200
-            response.json.return_value = {"cacheDuration": "60s", "threats": []}
+            # ไบนารีอิสระ: field 2 เป็น Duration ซึ่งมี seconds = 60
+            response.content = b"\x12\x02\x08\x3c"
             self.assertEqual(self.checker._request_safe_browsing("https://example.com"), (
                 {"status": "not_found", "threat_types": []}, 60.0,
             ))
@@ -241,21 +285,77 @@ class URLValidationTests(unittest.TestCase):
                     get.assert_called_once()
                     self.assertNotIn("SECRET_REQUEST", str(logs.call_args_list))
 
-    def test_request_rejects_invalid_json_or_malformed_report(self):
-        cases = (ValueError("invalid JSON"), None, [], {},
-                 {"cacheDuration": "300s", "threats": None})
-        for report in cases:
-            with self.subTest(report=report), patch.object(self.checker.requests, "get") as get:
+    def test_request_rejects_invalid_protobuf_or_malformed_report(self):
+        missing_url = self.protocol.SearchUrlsResponse()
+        missing_url.cache_duration.seconds = 60
+        missing_url.threats.add(threat_types=[1])
+        missing_types = self.protocol.SearchUrlsResponse()
+        missing_types.cache_duration.seconds = 60
+        missing_types.threats.add(url="https://example.com/")
+        invalid_duration = self.protocol.SearchUrlsResponse()
+        invalid_duration.cache_duration.seconds = -1
+        invalid_nanos = self.protocol.SearchUrlsResponse()
+        invalid_nanos.cache_duration.nanos = 1_000_000_000
+        cases = (
+            b"\x80", b"\x12\x02\x08", b"", b"<html>SECRET_RESPONSE</html>",
+            b'{"cacheDuration":"60s"}', missing_url.SerializeToString(),
+            missing_types.SerializeToString(), invalid_duration.SerializeToString(),
+            invalid_nanos.SerializeToString(),
+        )
+        for data in cases:
+            with self.subTest(data=data), patch.object(self.checker.requests, "get") as get:
                 response = get.return_value.__enter__.return_value
                 response.status_code = 200
-                if isinstance(report, Exception):
-                    response.json.side_effect = report
-                else:
-                    response.json.return_value = report
+                response.content = data
                 with self.assertRaises(ValueError):
                     self.checker._request_safe_browsing("https://example.com")
-                response.json.assert_called_once()
+                response.json.assert_not_called()
                 get.return_value.__exit__.assert_called_once()
+
+    def test_decoder_maps_all_public_v5_threat_types(self):
+        message = self.protocol.SearchUrlsResponse()
+        message.cache_duration.seconds = 1
+        message.cache_duration.nanos = 500_000_000
+        message.threats.add(url="https://example.com/", threat_types=[1, 2, 3, 4])
+        self.assertEqual(self.protocol.decode_safe_browsing_response(message.SerializeToString()), {
+            "cacheDuration": "1.500s",
+            "threats": [{
+                "url": "https://example.com/",
+                "threatTypes": [
+                    "MALWARE", "SOCIAL_ENGINEERING", "UNWANTED_SOFTWARE",
+                    "POTENTIALLY_HARMFUL_APPLICATION",
+                ],
+            }],
+        })
+
+    def test_decoder_rejects_nonbytes_instead_of_treating_them_as_no_match(self):
+        for data in (None, False, 123, [], {}, "", bytearray()):
+            with self.subTest(data=data), self.assertRaises(ValueError):
+                self.protocol.decode_safe_browsing_response(data)
+
+    def test_decoder_ignores_unknown_wire_fields_and_keeps_cache_duration(self):
+        self.assertEqual(
+            self.protocol.decode_safe_browsing_response(b"\x12\x02\x08\x3c\x98\x06\x01"),
+            {"cacheDuration": "60s"},
+        )
+
+    def test_unknown_or_unspecified_wire_threat_type_is_error_and_not_cached(self):
+        for threat_type in (0, 99):
+            with self.subTest(threat_type=threat_type), patch.object(self.checker.requests, "get") as get:
+                message = self.protocol.SearchUrlsResponse()
+                message.cache_duration.seconds = 60
+                message.threats.add(url="https://example.com/", threat_types=[threat_type])
+                response = get.return_value.__enter__.return_value
+                response.status_code = 200
+                response.content = message.SerializeToString()
+                with patch("builtins.print") as logs:
+                    for _ in range(2):
+                        self.assertEqual(self.checker.check_url("https://example.com/"), {
+                            "status": "error", "threat_types": [],
+                        })
+                self.assertEqual(get.call_count, 2)
+                self.assertEqual(self.checker._url_cache, {})
+                self.assertNotIn("offline-test-key", str(logs.call_args_list))
 
 
     def test_check_caches_matched_and_no_match_by_normalized_url(self):

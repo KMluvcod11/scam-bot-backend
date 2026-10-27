@@ -6,6 +6,7 @@ from threading import Lock
 from time import monotonic
 from urllib.parse import urlsplit, urlunsplit
 from config import SAFE_BROWSING_API_KEY
+from safe_browsing_proto import decode_safe_browsing_response
 
 
 # shortcut: cache อยู่ใน process เดียว, ใช้ที่เก็บร่วมเมื่อรันหลาย worker
@@ -13,6 +14,22 @@ _url_cache = {}
 _url_cache_lock = Lock()
 _URL_CACHE_MAX_ENTRIES = 1000
 
+
+def extract_urls(text: str) -> list[str]:
+    """ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม."""
+    if not isinstance(text, str):
+        raise ValueError("Text must be a string")
+
+    urls = []
+    # shortcut: ใช้ช่องว่างและอัญประกาศเป็นตัวคั่น, ขยายเมื่อรองรับวงเล็บและ URL จาก OCR หลายบรรทัด
+    pattern = r'https?://[^\s<>"“”]+'
+
+    for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+        url = match.group(0)
+        if url not in urls:
+            urls.append(url)
+
+    return urls
 
 def validate_url(url: str) -> str:
     if not isinstance(url,str):
@@ -128,7 +145,8 @@ def  _request_safe_browsing(url: str) -> tuple[dict, float]:
             raise ValueError(
                 f"Safe  Browsing HTTP {response.status_code}"
             )
-        return parse_safe_browsing_response(response.json())
+        data = decode_safe_browsing_response(response.content)
+        return parse_safe_browsing_response(data)
 
 
 

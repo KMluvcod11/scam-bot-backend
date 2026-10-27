@@ -9,6 +9,7 @@ from supabase import create_client
 from supabase.client import ClientOptions
 from httpx import TimeoutException
 from bot_observability import log as print, timed_call
+from url_checker import extract_urls, check_url
 from config import (
     GEMINI_KEY, SUPABASE_URL, SUPABASE_KEY, SAFE_WORDS, SCAM_TRIGGERS,
     VECTOR_MATCH_THRESHOLD, DIRECT_SCAM_THRESHOLD,
@@ -119,12 +120,39 @@ def analyze_message(text: str, *, private: bool = False) -> dict:
         if not clean_text:
             return {"status": "uncertain", "is_scam": False,
                     "reason": "กรุณาส่งข้อความที่ต้องการตรวจให้ครบถ้วน"}
+    urls = extract_urls(text)
+    url_check_failed = False
+
+    for url in urls[:3]:
+        url_result = timed_call("safe_browsing", check_url, url)
+
+        if url_result["status"] == "matched":
+            return{
+                "status": "risk_found",
+                "is_scam": True,
+                "risk_level": "high",
+                "reason": "พบลิงก์ในรายการภัยคุกคามของ Google Safe Browsing",
+            }
+
+        if url_result["status"] == "error":
+            url_check_failed = True
+    if url_check_failed:
+        return{
+            "status": 'error',
+            "is_scam": None,
+            "error_stage": 'safe_browsing',
+        }
+    if len(urls) > 3:
+        return {
+            "status": "uncertain",
+            "is_scam": False,
+            "reason": "ระบบยังตรวจลิงก์ไม่ครบ กรุณาส่งครั้งละไม่เกิน 3 ลิงก์",
+        }
 
     # ข้อความสั้นที่มีคำเสี่ยงต้องอ่านบริบท ไม่เตือนหรือข้ามจากคำเดียว
-    if not private and (clean_text in SAFE_WORDS or (len(clean_text) <= 25 and not has_trigger)):
+    if not private and not urls and (clean_text in SAFE_WORDS or (len(clean_text) <= 25 and not has_trigger)):
         print("👉 [STAGE 1: BYPASS] คำทั่วไปหรือข้อความสั้นที่ไม่มีคำบ่งชี้")
         return {"is_scam": False}
-
     try:
         similarity_percent, matched_label, matched_text = find_similarity(text)
     except DetectionUnavailable as error:
