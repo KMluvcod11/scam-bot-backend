@@ -20,6 +20,7 @@
 - [SQL เพิ่มข้อมูลผู้ส่ง](../supabase/add_detection_sender.sql)
 - [SQL จำกัดชุดตัวอย่างให้อ่านได้อย่างเดียวสำหรับผู้ใช้ทั่วไป](../supabase/secure_scam_dataset.sql)
 - [บันทึกความคืบหน้า Backend วันที่ 30 กันยายน 2026](../supabase/BACKEND_PROGRESS_2026-09-30.md)
+- [SQL จำกัดสิทธิ์สถิติ Dashboard](../supabase/secure_dashboard_daily_stats.sql)
 
 ## ชุดข้อมูล
 
