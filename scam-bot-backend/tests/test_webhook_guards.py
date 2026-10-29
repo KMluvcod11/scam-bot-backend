@@ -341,7 +341,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 "risk_level": "high", "reason": "SECRET_IMAGE_REASON",
             }
 
-        def reply_image(token, message):
+        def reply_image(token, message, card=None):
             stages.append(("reply", threading.get_ident()))
             return True
 

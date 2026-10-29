@@ -347,9 +347,11 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
         if should_reply:
             reply_msg = image_reply(image_result)
             card = None
-            # การ์ดและปุ่มรายละเอียดเฉพาะแชตส่วนตัว ในกลุ่มคงคำเตือนข้อความสั้นแบบเดิม
+            # ส่วนตัว: การ์ดพร้อมปุ่มรายละเอียด; กลุ่ม: การ์ดแบบเดียวกันแต่ไม่มีปุ่มหรือลิงก์ส่วนตัว
             if event.source.type == "user" and ocr_text:
                 image_case_id, card, _ = open_result_case(event, ocr_text, image_result, source="image")
+            elif ocr_text:
+                card = group_card(image_result, ocr_text, source="image")
             try:
                 sent = await run_in_threadpool(
                     timed_call,
@@ -414,19 +416,20 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
 
     # 6. สร้างคำเตือนและตอบด้วย reply_token ของ event นี้
     if result.get("is_scam"):
-        risk_display = result.get('risk_level', 'HIGH').upper()
         reason_text = result.get('reason', 'ตรวจพบพฤติกรรมหลอกลวง')
 
+        # ไม่แสดง risk_level ในแชต ค่ายังอยู่ใน result และประวัติให้ Dashboard ใช้
         reply_msg = (
-            f"⚠️ [แจ้งเตือนภัยคุกคาม] ⚠️\n\n"
-            f"ข้อความนี้มีความเสี่ยงเป็นมิจฉาชีพ!\n"
-            f"• ระดับความเสี่ยง: {risk_display}\n"
-            f"• สาเหตุ: {reason_text}\n\n"
-            f"⛔ คำเตือน: อย่ากดลิงก์ หรือโอนเงินโดยเด็ดขาด"
+            f"⚠️ พบสัญญาณเสี่ยงต่อการหลอกลวง\n"
+            f"• เหตุผล: {reason_text}\n\n"
+            f"อย่าเพิ่งกดลิงก์ โอนเงิน หรือเปิดเผย OTP ตรวจสอบผ่านช่องทางทางการก่อน\n"
+            f"นี่เป็นผลประเมินจากข้อความ ไม่ยืนยันตัวตนหรือข้อเท็จจริงของผู้ส่ง"
         )
+        card = group_card(result, user_text, source="text")
         # การส่ง LINE ก็รอเครือข่าย จึงให้ thread pool ทำงานส่วนนี้ด้วย
         try:
-            sent = await run_in_threadpool(reply_to_line, reply_token, reply_msg)
+            sent = await run_in_threadpool(reply_to_line, reply_token, reply_msg,
+                                           **({"card": card} if card else {}))
         except Exception as error:
             print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
             await run_in_threadpool(timed_call, "history", save_detection, event, result,
@@ -553,6 +556,15 @@ def open_result_case(event, text: str, result: dict, *, source: str):
     except Exception as error:
         print(f"[LEARNING ERROR] type={type(error).__name__}")
         return None, None, False
+
+
+def group_card(result: dict, text: str, *, source: str) -> dict | None:
+    """การ์ดเตือนในกลุ่ม: ไม่มีปุ่มรายละเอียด ไม่เปิดเคสส่วนตัว; สร้างไม่ได้ก็ส่งข้อความธรรมดา."""
+    try:
+        return build_result_card(result, source=source, quote=text, case_id=None, group=True)
+    except Exception as error:
+        print(f"[CARD ERROR] stage=group type={type(error).__name__}")
+        return None
 
 
 async def process_private_event(event: MessageEvent):

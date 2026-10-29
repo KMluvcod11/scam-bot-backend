@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import unicodedata
 from types import ModuleType
 import unittest
 from unittest.mock import Mock, patch
@@ -29,39 +30,116 @@ def all_texts(node):
     return []
 
 
+STATUSES = {"risk_found": ("พบสัญญาณเสี่ยง", "alert", "คำเตือน"),
+            "uncertain": ("ควรตรวจเพิ่ม", "inspect", "คำแนะนำ"),
+            "no_risk_found": ("ยังไม่พบสัญญาณเสี่ยง", "calm", "คำแนะนำ")}
+FORBIDDEN = ("ระดับความเสี่ยง", "HIGH", "MEDIUM", "LOW", "สูง", "ปานกลาง", "ต่ำ", "100%")
+
+
+def walk(node):
+    if isinstance(node, dict):
+        yield node
+        for value in node.values():
+            yield from walk(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from walk(item)
+
+
 class ResultCardTests(unittest.TestCase):
-    def card(self, status="risk_found", **kwargs):
-        result = {"status": status, "is_scam": status == "risk_found", "reason": "อ้างสิทธิ์คืนเงิน"}
+    def card(self, status="risk_found", reason="อ้างสิทธิ์คืนเงิน", **kwargs):
+        result = {"status": status, "is_scam": status == "risk_found", "risk_level": "high",
+                  "reason": reason}
         options = {"source": "text", "quote": "คุณได้รับสิทธิ์คืนเงินค่าไฟ", "case_id": CASE_ID}
         options.update(kwargs)
         return flex_cards.build_result_card(result, **options)
 
-    def test_each_status_has_title_mascot_and_detail_button(self):
-        expected = {"risk_found": ("พบสัญญาณเสี่ยง", "alert"), "uncertain": ("ควรตรวจเพิ่ม", "inspect"),
-                    "no_risk_found": ("ยังไม่พบสัญญาณเสี่ยง", "calm")}
+    def test_matrix_private_group_text_image_every_status(self):
         with patch.dict(os.environ, LIVE_ENV):
-            for status, (title, pose) in expected.items():
-                with self.subTest(status=status):
-                    card = self.card(status)
-                    self.assertEqual(card["type"], "flex")
-                    self.assertIn(title, card["altText"])
-                    texts = all_texts(card["contents"])
-                    self.assertIn(title, texts)
-                    self.assertIn("ตรวจจากข้อความ", texts)
-                    body = json.dumps(card, ensure_ascii=False)
-                    self.assertIn(f"https://mini.example/mascot/{pose}.png", body)
-                    button = card["contents"]["footer"]["contents"][0]
-                    self.assertEqual(button["action"], {"type": "uri", "label": "ดูรายละเอียด",
-                        "uri": f"https://liff.line.me/1234567890-TestApp?case={CASE_ID}"})
+            for status, (title, pose, note) in STATUSES.items():
+                for source, kicker in (("text", "ผลตรวจข้อความ"), ("image", "ผลตรวจข้อความจากรูปภาพ")):
+                    for group in (False, True):
+                        with self.subTest(status=status, source=source, group=group):
+                            card = self.card(status, source=source, group=group,
+                                             case_id=None if group else CASE_ID)
+                            texts = all_texts(card["contents"])
+                            dumped = json.dumps(card, ensure_ascii=False)
+                            # ลำดับ 4 ส่วน: ผลตรวจ → ข้อความที่พบ → เหตุผล → คำเตือน/คำแนะนำ
+                            order = [texts.index(kicker), texts.index(title), texts.index("ข้อความที่พบ"),
+                                     texts.index("เหตุผล"),
+                                     next(i for i, t in enumerate(texts) if t.endswith(note))]
+                            self.assertEqual(order, sorted(order))
+                            self.assertIn("“คุณได้รับสิทธิ์คืนเงินค่าไฟ”", texts)
+                            self.assertIn("อ้างสิทธิ์คืนเงิน", texts)
+                            self.assertIn(flex_cards.DISCLAIMER, texts)
+                            self.assertEqual(card["contents"]["header"]["backgroundColor"],
+                                             flex_cards.STATUS_STYLES[status]["header"])
+                            self.assertIn(f"https://mini.example/mascot/{pose}.png", dumped)
+                            for word in FORBIDDEN:
+                                self.assertNotIn(word, dumped)
+                            if group:
+                                self.assertNotIn("footer", card["contents"])
+                                self.assertNotIn("liff", dumped)
+                            else:
+                                button = card["contents"]["footer"]["contents"][0]
+                                self.assertEqual(button["action"], {"type": "uri", "label": "ดูรายละเอียด",
+                                    "uri": f"https://liff.line.me/1234567890-TestApp?case={CASE_ID}"})
 
-    def test_quote_is_shortened_and_image_source_is_labelled(self):
+    def test_group_never_gets_button_even_with_case_id_or_postback(self):
         with patch.dict(os.environ, LIVE_ENV):
-            card = self.card(source="image", quote="ก" * 200)
+            card = self.card(group=True, allow_postback=True)
+        self.assertNotIn("footer", card["contents"])
+
+    def test_status_designs_differ_and_only_risk_is_pink_warning(self):
+        notes = {}
+        for status in STATUSES:
+            body = self.card(status)["contents"]["body"]["contents"]
+            notes[status] = body[4]["backgroundColor"]
+        self.assertEqual(notes["risk_found"], "#FDECEE")
+        self.assertEqual(len(set(notes.values())), 3)
+
+    def test_group_fallback_warning_uses_risk_card(self):
+        card = flex_cards.build_result_card({"status": "fallback", "is_scam": True, "risk_level": "medium",
+                                             "reason": "ใกล้เคียง 85% (ระบบสำรอง)"},
+                                            source="text", quote="x", case_id=None, group=True)
+        self.assertIn("พบสัญญาณเสี่ยง", all_texts(card["contents"]))
+        self.assertNotIn("medium", json.dumps(card).lower())
+        self.assertIsNone(flex_cards.build_result_card({"status": "fallback", "is_scam": False},
+                                                       source="text", quote="x", case_id=None))
+
+    def test_reason_lines_become_bullets(self):
+        card = self.card(reason="แอบอ้างเป็นธนาคาร\n• ขู่ว่าบัญชีจะถูกระงับ\n- เร่งให้ส่ง OTP")
         texts = all_texts(card["contents"])
-        self.assertIn("ตรวจจากรูปภาพ", texts)
-        quote = next(text for text in texts if text.startswith("ข้อความในรูป:"))
-        self.assertLessEqual(len(quote), 80)
-        self.assertTrue(quote.endswith("…”"))
+        for item in ("แอบอ้างเป็นธนาคาร", "ขู่ว่าบัญชีจะถูกระงับ", "เร่งให้ส่ง OTP"):
+            self.assertIn(item, texts)
+        self.assertEqual(texts.count("●"), 3)
+
+    def test_long_thai_text_is_cut_safely_and_warning_kept(self):
+        long_quote = "บัญชีของคุณจะถูกระงับ กรุณาส่งรหัส OTP ภายในห้านาทีเพื่อยืนยันตัวตน " * 10
+        long_reason = "แอบอ้างเป็นเจ้าหน้าที่ธนาคารและเร่งให้ผู้รับเปิดเผยข้อมูลสำคัญ" * 20
+        with patch.dict(os.environ, LIVE_ENV):
+            for group in (False, True):
+                card = self.card(quote=long_quote, reason=long_reason, group=group)
+                texts = all_texts(card["contents"])
+                quote = next(t for t in texts if t.startswith("“"))
+                self.assertLessEqual(len(quote), flex_cards.QUOTE_LIMIT + 3)
+                self.assertTrue(quote.endswith("…”"))
+                reason = next(t for t in texts if t.startswith("แอบอ้าง"))
+                self.assertLessEqual(len(reason), flex_cards.REASON_LIMIT + 1)
+                self.assertIn(flex_cards.STATUS_STYLES["risk_found"]["advice"], texts)
+                self.assertIn(flex_cards.DISCLAIMER, texts)
+                self.assertFalse(any(node.get("maxLines") for node in walk(card)))
+                self.assertLessEqual(len(card["altText"]), 400)
+                self.assertLess(len(json.dumps(card).encode()), 30000)
+
+    def test_shorten_never_orphans_thai_marks_or_leading_vowels(self):
+        text = "เที่ยวไม่จ่ายเงินแน่นอนไม่ใช่"  # ไม่มีช่องว่าง บังคับตัดกลางคำ
+        for limit in range(1, len(text)):
+            with self.subTest(limit=limit):
+                cut = flex_cards.shorten(text, limit)[:-1]
+                rest = text[len(cut):]
+                self.assertFalse(rest and unicodedata.category(rest[0]) == "Mn")
+                self.assertFalse(cut and cut[-1] in flex_cards.THAI_LEADING_VOWELS)
 
     def test_without_mini_settings_card_still_builds_without_image_or_uri(self):
         with patch.dict(os.environ, {"MINI_LIFF_ID": "", "LINE_LOGIN_CHANNEL_ID": "", "MINI_WEB_ORIGIN": ""}):
@@ -84,7 +162,7 @@ class ResultCardTests(unittest.TestCase):
             card = flex_cards.build_result_card({"status": "risk_found", "reason": "ร" * 2000},
                                                 source="text", quote="x" * 2000, case_id=CASE_ID)
         self.assertLessEqual(len(card["altText"]), 400)
-        self.assertTrue(all(len(text) <= 300 for text in all_texts(card["contents"])))
+        self.assertTrue(all(len(text) <= 410 for text in all_texts(card["contents"])))
 
 
 def load_messaging():

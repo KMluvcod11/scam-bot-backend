@@ -206,10 +206,11 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             order.append("analyze")
             return {"is_scam": True, "risk_level": "high", "reason": "เหตุผลทดสอบ"}
 
-        def reply(token, message):
+        def reply(token, message, card=None):
             self.assertNotEqual(threading.get_ident(), loop_thread)
             self.assertEqual(token, "reply-1")
-            self.assertIn("HIGH", message)
+            self.assertNotIn("HIGH", message)
+            self.assertIn("พบสัญญาณเสี่ยง", card["altText"])
             self.assertIn("เหตุผลทดสอบ", message)
             order.append("reply")
             return True
@@ -227,7 +228,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
                 started, release = threading.Event(), threading.Event()
                 scam = {"is_scam": True, "risk_level": "high", "reason": "test"}
 
-                def slow_call(*args):
+                def slow_call(*args, **kwargs):
                     started.set()
                     if not release.wait(timeout=3):
                         raise TimeoutError("test worker was not released")

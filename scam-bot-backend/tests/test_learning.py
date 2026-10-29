@@ -133,10 +133,16 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
             self.assertRegex(self.module.save_detection.call_args.kwargs["case_id"], r"^[0-9a-f]{32}$")
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
-    async def test_group_warning_stays_text_only(self):
-        self.module.analyze_message.return_value = result("risk_found")
+    async def test_group_warning_gets_card_without_button_or_lesson(self):
+        self.module.analyze_message.return_value = {**result("risk_found"), "risk_level": "high"}
         await self.post_events([fixtures.text_event()])
-        self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
+        kwargs = self.module.reply_to_line.call_args.kwargs
+        self.assertEqual(set(kwargs), {"card"})
+        self.assertNotIn("footer", kwargs["card"]["contents"])
+        self.assertNotIn("liff", str(kwargs["card"]))
+        reply = self.module.reply_to_line.call_args.args[1]
+        self.assertNotIn("ระดับความเสี่ยง", reply)
+        self.assertNotIn("HIGH", reply)
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
     async def test_store_full_or_learning_error_preserves_detection_reply(self):
@@ -203,9 +209,9 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
             await self.post_events([event])
         token, reply = self.module.reply_to_line.call_args.args
         card = self.module.reply_to_line.call_args.kwargs["card"]
-        self.assertIn("ตรวจจากรูปภาพ", str(card))
+        self.assertIn("ผลตรวจข้อความจากรูปภาพ", str(card))
         self.assertIn("พบสัญญาณเสี่ยง", reply)
-        self.assertIn("ข้อความในรูป:", str(card))
+        self.assertIn(self.module.extract_text_from_image.return_value["text"][:20], str(card))
 
     async def test_card_link_and_saved_row_share_case_id(self):
         self.module.analyze_message.return_value = result("uncertain")
@@ -238,12 +244,14 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
         if self.module.save_detection.called:
             self.assertNotIn("case_id", self.module.save_detection.call_args.kwargs)
 
-    async def test_group_image_warning_stays_plain_text(self):
+    async def test_group_image_warning_gets_card_without_button(self):
         event = fixtures.image_event(2)
         with patch.object(self.module, "analyze_message", return_value=result("risk_found")):
             await self.post_events([event])
-        if self.module.reply_to_line.called:
-            self.assertNotIn("card", self.module.reply_to_line.call_args.kwargs)
+        card = self.module.reply_to_line.call_args.kwargs["card"]
+        self.assertIn("ผลตรวจข้อความจากรูปภาพ", str(card))
+        self.assertNotIn("footer", card["contents"])
+        self.assertNotIn("learn_case_id", self.module.reply_to_line.call_args.kwargs)
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
 
