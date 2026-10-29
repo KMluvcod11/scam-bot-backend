@@ -18,6 +18,7 @@
 - [รูปแบบข้อมูล Dashboard](../supabase/DATA_CONTRACT.md)
 - [SQL โครงสร้าง Dashboard](../supabase/dashboard_schema.sql)
 - [SQL เพิ่มข้อมูลผู้ส่ง](../supabase/add_detection_sender.sql)
+- [SQL จำกัดชุดตัวอย่างให้อ่านได้อย่างเดียวสำหรับผู้ใช้ทั่วไป](../supabase/secure_scam_dataset.sql)
 - [บันทึกความคืบหน้า Backend วันที่ 30 กันยายน 2026](../supabase/BACKEND_PROGRESS_2026-09-30.md)
 
 ## ชุดข้อมูล
