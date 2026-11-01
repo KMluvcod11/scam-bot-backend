@@ -9,12 +9,14 @@ import test_webhook_threadpool as fixtures
 from test_llm_validation import load_detector
 
 
+# private_event: เปลี่ยน text event จำลองให้เป็นแชตส่วนตัวของ offline-user
 def private_event(text="ส่ง OTP มา", number=1):
     event = fixtures.text_event(text, number)
     event["source"] = {"type": "user", "userId": "offline-user"}
     return event
 
 
+# result: คืนผลตรวจจำลองที่จับคู่ status, is_scam และระดับความเสี่ยงให้สอดคล้องกัน
 def result(status):
     return {"status": status, "is_scam": status == "risk_found",
             "risk_level": "medium" if status == "risk_found" else "low", "reason": "เหตุผลทดสอบ"}
@@ -27,12 +29,14 @@ def warning_kwargs(save_mock):
 
 
 class PrivateDetectionTests(unittest.TestCase):
+    # setUp: โหลดโมดูลที่ทดสอบด้วย dependency จำลองก่อนแต่ละกรณี เพื่อไม่เรียกบริการจริง
     def setUp(self):
         self.d = load_detector()
         self.logs = patch("builtins.print")
         self.logs.start()
         self.addCleanup(self.logs.stop)
 
+    # test_exact_greetings_skip_external_services: ทดสอบคำทักทายที่ตรงรายการในแชตส่วนตัวข้ามเวกเตอร์และ LLM
     def test_exact_greetings_skip_external_services(self):
         with patch.object(self.d, "find_similarity") as vector, patch.object(self.d, "analyze_with_llm") as llm:
             for text in ("สวัสดี", " สวัสดีครับ ", "HI", "ขอบคุณ", "โอเค", "วิธีใช้งาน"):
@@ -40,6 +44,7 @@ class PrivateDetectionTests(unittest.TestCase):
             vector.assert_not_called()
             llm.assert_not_called()
 
+    # test_short_url_low_and_high_scores_always_get_context_check: ทดสอบข้อความส่วนตัวสั้นและ URL ได้รับการวิเคราะห์บริบททั้งคะแนนต่ำและสูง
     def test_short_url_low_and_high_scores_always_get_context_check(self):
         for text in ("ส่ง OTP มา", "https://example.invalid", "สวัสดี โอนค่าประกันก่อน", "กินข้าวยัง"):
             for score, label in ((0, None), (64, "spam"), (99, "spam"), (99, "ham")):
@@ -47,12 +52,14 @@ class PrivateDetectionTests(unittest.TestCase):
                     self.assertEqual(self.d.analyze_message(text, private=True)["status"], "uncertain")
                     llm.assert_called_once_with(text, score, label, matched_text="ตัวอย่าง", private=True)
 
+    # test_all_private_statuses_validated: ทดสอบผล LLM ส่วนตัวที่มีสถานะรองรับและ boolean สอดคล้องผ่าน validation
     def test_all_private_statuses_validated(self):
         for status in ("conversation", "no_risk_found", "risk_found", "uncertain"):
             expected = result(status)
             self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
             self.assertEqual(self.d.analyze_with_llm("ทดสอบ", 99, "spam", private=True), expected)
 
+    # test_private_prompt_distinguishes_submitted_conversation_from_bot_help: ทดสอบ prompt แยกบทสนทนาที่ส่งมาตรวจออกจากคำถามวิธีใช้บอต
     def test_private_prompt_distinguishes_submitted_conversation_from_bot_help(self):
         # Checks the instructions sent to the SDK, NOT real model accuracy.
         expected = result("no_risk_found")
@@ -66,6 +73,7 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertTrue(prompt.rstrip().endswith(json.dumps(text, ensure_ascii=False)))
         self.assertNotIn("conversation = สนทนาทั่วไปหรือถามนอกหน้าที่", prompt)
 
+    # test_private_prompt_limits_claims_to_text_evidence: ทดสอบ prompt จำกัดเหตุผลให้ยึดหลักฐานในข้อความ ไม่ฟันธงข้อมูลที่ยังไม่ได้ยืนยัน
     def test_private_prompt_limits_claims_to_text_evidence(self):
         # Verifies prompt wiring, not whether the real model follows it.
         expected = result("risk_found")
@@ -78,6 +86,7 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertIn('ไม่ตีความ "เริ่มงานได้ทันที" ว่าเร่งโอนเงิน', prompt)
         self.assertTrue(prompt.rstrip().endswith(json.dumps(text, ensure_ascii=False)))
 
+    # test_group_prompt_distinguishes_normal_sales_from_combined_risk: ทดสอบ prompt กลุ่มแยกซื้อขายปกติออกจากพฤติกรรมเสี่ยงหลายอย่างร่วมกัน
     def test_group_prompt_distinguishes_normal_sales_from_combined_risk(self):
         # ตรวจคำสั่งที่ส่งให้ SDK ไม่ใช่ผลตัดสินของ AI จริง
         expected = result("risk_found")
@@ -91,6 +100,7 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertIn("แยกคำเตือนภัยหรือการยกตัวอย่าง", prompt)
         self.assertIn("ไม่ฟันธงว่ารางวัลปลอมหรือเว็บฟิชชิง", prompt)
 
+    # test_image_and_private_prompt_do_not_invent_reward_evidence: ทดสอบ prompt เตือนไม่ให้เติมหลักฐานเรื่องรางวัล ลิงก์ หรือขอโอนที่ไม่มีในข้อความ
     def test_image_and_private_prompt_do_not_invent_reward_evidence(self):
         expected = result("uncertain")
         self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
@@ -100,6 +110,7 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertIn("ห้ามเติมการขอข้อมูลหรือโอนเงินที่ไม่มีในข้อความ", prompt)
         self.assertIn("OCR อาจอ่านคลาดเคลื่อน", prompt)
 
+    # test_private_prompt_includes_dataset_metadata_without_another_lookup: ทดสอบ prompt ส่วนตัวรวมคะแนน label และตัวอย่างเดิมโดยไม่ค้นฐานข้อมูลเพิ่ม
     def test_private_prompt_includes_dataset_metadata_without_another_lookup(self):
         # ตรวจข้อมูลที่ส่งให้ SDK ไม่ใช่ความแม่นยำของ AI จริง
         expected = result("uncertain")
@@ -133,6 +144,7 @@ class PrivateDetectionTests(unittest.TestCase):
 
             lookup.assert_not_called()
 
+    # test_private_failover_keeps_dataset_context_and_message_without_secret_logs: ทดสอบเปลี่ยนโมเดลแล้วยังคงข้อความกับบริบท Dataset เดิมโดยไม่เผยเนื้อหาใน log
     def test_private_failover_keeps_dataset_context_and_message_without_secret_logs(self):
         expected = result("uncertain")
         text = "SECRET_OCR_FAILOVER_TEXT"
@@ -158,6 +170,7 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertNotIn(text, str(logs.call_args_list))
         self.assertNotIn("SECRET_FAILOVER_EXAMPLE", str(logs.call_args_list))
 
+    # test_group_prompt_keeps_classification_but_receives_dataset_context: ทดสอบ prompt กลุ่มคงรูปแบบตัดสินเดิมและรับข้อมูลประกอบจาก Dataset
     def test_group_prompt_keeps_classification_but_receives_dataset_context(self):
         expected = {"is_scam": False, "risk_level": "low", "reason": "เหตุผลทดสอบ"}
         self.d.client.models.generate_content.return_value = SimpleNamespace(text=json.dumps(expected))
@@ -167,6 +180,7 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertIn("ข้อมูลประกอบจาก dataset", prompt)
         self.assertIn('"matched_label"', prompt)
 
+    # test_bad_status_and_contradiction_fail_closed: ทดสอบสถานะไม่รองรับหรือขัดกับ is_scam จบเป็น error แทนคำตัดสิน
     def test_bad_status_and_contradiction_fail_closed(self):
         for bad in ({k: v for k, v in result("no_risk_found").items() if k != "status"},
                     result("safe"), {**result("risk_found"), "is_scam": False},
@@ -176,6 +190,7 @@ class PrivateDetectionTests(unittest.TestCase):
             self.assertEqual(actual["status"], "error")
             self.assertIsNone(actual["is_scam"])
 
+    # test_missing_status_retries_next_model: ทดสอบผลส่วนตัวขาด status ทำให้ลองโมเดลถัดไป
     def test_missing_status_retries_next_model(self):
         self.d.client.models.generate_content.side_effect = [
             SimpleNamespace(text='{}'), SimpleNamespace(text=json.dumps(result("uncertain"))),
@@ -183,12 +198,14 @@ class PrivateDetectionTests(unittest.TestCase):
         self.assertEqual(self.d.analyze_with_llm("ทดสอบ", 0, private=True), result("uncertain"))
         self.assertEqual(self.d.client.models.generate_content.call_count, 2)
 
+    # test_private_vector_error_is_not_a_negative_result: ทดสอบเวกเตอร์เสียในแชตส่วนตัวไม่ถูกแปลงเป็นผลไม่เสี่ยง
     def test_private_vector_error_is_not_a_negative_result(self):
         with patch.object(self.d, "find_similarity", side_effect=self.d.DetectionUnavailable("vector_db", "TimeoutError")):
             actual = self.d.analyze_message("ส่ง OTP มา", private=True)
         self.assertEqual(actual["status"], "error")
         self.assertIsNone(actual["is_scam"])
 
+    # test_private_timeout_has_no_score_fallback: ทดสอบ LLM ส่วนตัว timeout ไม่ใช้คะแนนสูงมาสร้างคำเตือนสำรอง
     def test_private_timeout_has_no_score_fallback(self):
         self.d.client.models.generate_content.side_effect = TimeoutError("SECRET")
         self.assertEqual(self.d.analyze_with_llm("ทดสอบ", 99, "spam", private=True)["status"], "error")
@@ -200,6 +217,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    # test_ocr_debug_requires_explicit_opt_in_and_preserves_analysis_input: ทดสอบพิมพ์ข้อความ OCR เฉพาะเมื่อเปิด debug ชัดเจน และข้อความที่ส่งวิเคราะห์ไม่เปลี่ยน
     async def test_ocr_debug_requires_explicit_opt_in_and_preserves_analysis_input(self):
         text = 'ข้อความทดสอบส่วนตัว\n"ลิงก์จากการ์ดพรีวิว"'
         self.module.extract_text_from_image.return_value = {"status": "ok", "text": text}
@@ -221,6 +239,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn("ข้อความทดสอบส่วนตัว", str(logs.call_args_list))
                 self.module.analyze_message.assert_called_with(text, private=True)
 
+    # test_private_log_contains_metadata_not_message: ทดสอบ log แชตส่วนตัวมี trace และข้อมูลจำนวนอักขระแทนข้อความจริง
     async def test_private_log_contains_metadata_not_message(self):
         text = "สวัสดีครับ\nข้อความทดสอบ"
         self.module.analyze_message.return_value = result("conversation")
@@ -234,6 +253,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                          f"[MESSAGE] source=user chars={len(text)}")
         self.assertNotIn('ข้อความทดสอบ', str(logs.call_args_list))
 
+    # test_private_replies_for_each_result: ทดสอบคำตอบส่วนตัวตรงสถานะที่วิเคราะห์ได้แต่ละแบบ
     async def test_private_replies_for_each_result(self):
         for number, (status, expected) in enumerate((
             ("conversation", "ส่งข้อความที่สงสัย"), ("risk_found", "พบสัญญาณเสี่ยง"),
@@ -246,16 +266,19 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
             self.module.analyze_message.assert_called_with("ส่ง OTP มา", private=True)
             self.assertIn(expected, self.module.reply_to_line.call_args.args[1])
 
+    # test_unknown_legacy_result_does_not_claim_checked: ทดสอบผลเก่าที่ไม่มีสถานะชัดเจนไม่ถูกตอบเหมือนตรวจสำเร็จแล้ว
     async def test_unknown_legacy_result_does_not_claim_checked(self):
         self.module.analyze_message.return_value = {"is_scam": False}
         await self.post_events([private_event()])
         self.assertEqual(self.module.reply_to_line.call_args.args[1], self.module.PRIVATE_ERROR)
 
+    # test_thanks_is_brief: ทดสอบข้อความขอบคุณได้รับคำตอบสั้นตามกรณีสนทนา
     async def test_thanks_is_brief(self):
         self.module.analyze_message.return_value = result("conversation")
         await self.post_events([private_event("ขอบคุณ")])
         self.assertIn("ยินดีครับ", self.module.reply_to_line.call_args.args[1])
 
+    # test_exception_replies_and_next_event_continues: ทดสอบวิเคราะห์ส่วนตัวเกิด exception แล้วยังแจ้งตรวจไม่ได้และทำ event ถัดไป
     async def test_exception_replies_and_next_event_continues(self):
         self.module.analyze_message.side_effect = [RuntimeError("SECRET"), result("no_risk_found")]
         with patch("builtins.print") as logs:
@@ -265,6 +288,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ตรวจข้อความนี้ไม่สำเร็จ", self.module.reply_to_line.call_args_list[0].args[1])
         self.assertNotIn("SECRET", str(logs.call_args_list))
 
+    # test_private_image_replies_and_saves_analysis_once: ทดสอบรูปส่วนตัววิเคราะห์ ตอบ และบันทึกประวัติเพียงครั้งเดียว
     async def test_private_image_replies_and_saves_analysis_once(self):
         event = private_event()
         event["message"] = {"type": "image", "id": "1", "contentProvider": {"type": "line"}, "quoteToken": "offline"}
@@ -283,6 +307,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
             "warning_attempted": True, "warning_sent": True,
         })
 
+    # test_image_urls_use_shared_detection_before_reply_and_history: ทดสอบ URL จาก OCR ใช้การตรวจร่วมก่อนตอบและบันทึกประวัติ
     async def test_image_urls_use_shared_detection_before_reply_and_history(self):
         detector = load_detector()
         self.module.analyze_message.side_effect = detector.analyze_message
@@ -340,6 +365,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(saved.kwargs["image_text"], text)
                     self.assertNotIn("SECRET", str(logs.call_args_list))
 
+    # test_private_image_returns_each_analysis_status: ทดสอบรูปส่วนตัวส่งผลแต่ละสถานะจากการวิเคราะห์ไปตอบได้ตรงกัน
     async def test_private_image_returns_each_analysis_status(self):
         cases = (
             ("risk_found", "พบสัญญาณเสี่ยง"),
@@ -371,6 +397,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                     "warning_attempted": True, "warning_sent": True,
                 })
 
+    # test_private_image_failures_reply_once_with_retry_or_clarity_request: ทดสอบรูปอ่านไม่ได้หรืองานล้มเหลวตอบขอรูปชัดขึ้นหรือลองใหม่เพียงครั้งเดียว
     async def test_private_image_failures_reply_once_with_retry_or_clarity_request(self):
         cases = (
             ("get_image_content", None),
@@ -408,6 +435,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 })
         self.module.analyze_message.assert_not_called()
 
+    # test_failed_image_send_does_not_retry_or_stop_next_text: ทดสอบส่งผลรูปล้มเหลวไม่ retry และไม่ขัดขวางข้อความถัดไป
     async def test_failed_image_send_does_not_retry_or_stop_next_text(self):
         for number, failure in enumerate((False, RuntimeError("SECRET_SEND")), start=1):
             with self.subTest(failure=failure):
@@ -435,6 +463,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("image_text", saved)
                 self.assertRegex(saved["case_id"], r"^[0-9a-f]{32}$")
 
+    # test_private_image_requires_identity_before_work: ทดสอบรูปส่วนตัวที่ขาดข้อมูลระบุตัว event ถูกปฏิเสธก่อนเริ่มทำงาน
     async def test_private_image_requires_identity_before_work(self):
         event = private_event()
         event["message"] = {"type": "image", "id": "1", "contentProvider": {"type": "line"}, "quoteToken": "offline"}
@@ -443,18 +472,21 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.module.reply_to_line.assert_not_called()
 
+    # test_bad_signature_cannot_trigger_private_analysis: ทดสอบลายเซ็นผิดไม่สามารถกระตุ้นการวิเคราะห์หรือตอบส่วนตัว
     async def test_bad_signature_cannot_trigger_private_analysis(self):
         response = await self.post_events([private_event()], valid_signature=False)
         self.assertEqual(response.status_code, 400)
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
 
+    # test_same_private_event_only_replies_once: ทดสอบส่ง event ส่วนตัวเดิมซ้ำวิเคราะห์และตอบเพียงครั้งเดียว
     async def test_same_private_event_only_replies_once(self):
         self.module.analyze_message.return_value = result("no_risk_found")
         await self.post_events([private_event(), private_event()])
         self.module.analyze_message.assert_called_once()
         self.module.reply_to_line.assert_called_once()
 
+    # test_mixed_group_and_private_preserve_modes: ทดสอบชุด event ผสมยังเลือกโหมดกลุ่มและ private ถูกต้อง
     async def test_mixed_group_and_private_preserve_modes(self):
         self.module.analyze_message.side_effect = [{"is_scam": False}, result("no_risk_found")]
         await self.post_events([fixtures.text_event(number=1), private_event(number=2)])
@@ -464,6 +496,7 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_called_once()
         self.assertEqual(self.module.reply_to_line.call_args.args[0], "reply-2")
 
+    # test_private_reply_exception_does_not_stop_next_event: ทดสอบส่งคำตอบส่วนตัวเกิด exception แล้วยังประมวลผล event ถัดไป
     async def test_private_reply_exception_does_not_stop_next_event(self):
         self.module.analyze_message.return_value = result("no_risk_found")
         self.module.reply_to_line.side_effect = [RuntimeError("SECRET"), True]
@@ -473,9 +506,11 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
 
 
 class ImageReplyTests(unittest.TestCase):
+    # setUp: โหลดโมดูลที่ทดสอบด้วย dependency จำลองก่อนแต่ละกรณี เพื่อไม่เรียกบริการจริง
     def setUp(self):
         self.module = fixtures.load_app()
 
+    # test_assessed_image_preserves_reason_and_limits: ทดสอบข้อความตอบผลรูปคงเหตุผลและข้อจำกัดโดยไม่ส่ง LINE หรือบันทึกเอง
     def test_assessed_image_preserves_reason_and_limits(self):
         for status, heading in (
             ("risk_found", "พบสัญญาณเสี่ยง"),
@@ -493,6 +528,7 @@ class ImageReplyTests(unittest.TestCase):
         self.module.reply_to_line.assert_not_called()
         self.module.save_detection.assert_not_called()
 
+    # test_incomplete_image_results_request_context_or_retry: ทดสอบผลรูปไม่สมบูรณ์ขอรายละเอียดหรือให้ลองใหม่โดยไม่ขอ OTP/รหัสผ่าน
     def test_incomplete_image_results_request_context_or_retry(self):
         reply = self.module.image_reply(result("uncertain"))
         self.assertIn("เหตุผลทดสอบ", reply)
@@ -507,6 +543,7 @@ class ImageReplyTests(unittest.TestCase):
                 self.assertIn("ยังให้ผลประเมินไม่ได้", reply)
                 self.assertIn("ส่งใหม่", reply)
 
+    # test_contradictory_results_do_not_produce_risk_or_clear_verdict: ทดสอบผลรูปที่ขัดแย้งไม่แสดงคำตัดสินว่าเสี่ยงหรือไม่เสี่ยง
     def test_contradictory_results_do_not_produce_risk_or_clear_verdict(self):
         for status, flag in (("risk_found", False), ("no_risk_found", True), ("uncertain", True)):
             with self.subTest(status=status, flag=flag):

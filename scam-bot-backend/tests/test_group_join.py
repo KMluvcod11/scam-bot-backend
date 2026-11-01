@@ -11,6 +11,7 @@ from test_detection_history import load_history
 import test_webhook_threadpool as webhook_tests
 
 
+# join_event: คืน webhook join ของกลุ่มแบบจำลอง พร้อม ID และเวลาที่ใช้ทดสอบซ้ำได้
 def join_event():
     return {
         'type': 'join', 'timestamp': 1700000000000, 'mode': 'active',
@@ -25,6 +26,7 @@ class JoinWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = webhook_tests.WebhookThreadpoolTests.asyncTearDown
     post_events = webhook_tests.WebhookThreadpoolTests.post_events
 
+    # test_join_runs_in_worker_without_analysis_or_reply: ทดสอบรับ join แล้วบันทึกกลุ่มใน worker โดยไม่วิเคราะห์ข้อความหรือตอบ LINE
     async def test_join_runs_in_worker_without_analysis_or_reply(self):
         loop_thread = threading.get_ident()
         workers = []
@@ -36,15 +38,18 @@ class JoinWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.module.save_detection.assert_not_called()
 
+    # test_duplicate_join_is_skipped: ทดสอบ join event เดิมถูกบันทึกเพียงครั้งเดียว
     async def test_duplicate_join_is_skipped(self):
         await self.post_events([join_event()])
         await self.post_events([join_event()])
         self.module.save_group_join.assert_called_once()
 
+    # test_save_failure_keeps_webhook_alive: ทดสอบบันทึก join คืน False แล้วยังคงตอบ webhook 200
     async def test_save_failure_keeps_webhook_alive(self):
         self.module.save_group_join.return_value = False
         self.assertEqual((await self.post_events([join_event()])).status_code, 200)
 
+    # test_background_join_exception_does_not_skip_next_event: ทดสอบ join เบื้องหลังเกิด exception แล้วยังประมวลผล event ถัดไปโดยไม่เผย error ลับ
     async def test_background_join_exception_does_not_skip_next_event(self):
         self.module.save_group_join.side_effect = RuntimeError("SECRET_SERVER_MESSAGE")
         with patch('builtins.print') as output:
@@ -54,6 +59,7 @@ class JoinWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('[EVENT ERROR]', str(output.call_args_list))
         self.assertNotIn('SECRET_SERVER_MESSAGE', str(output.call_args_list))
 
+    # test_bad_signature_and_invalid_join_do_not_write: ทดสอบลายเซ็นหรือข้อมูล join ไม่ถูกต้องถูกปฏิเสธก่อนเขียนข้อมูล
     async def test_bad_signature_and_invalid_join_do_not_write(self):
         self.assertEqual((await self.post_events([join_event()], False)).status_code, 400)
         for field, value in [('source', {}), ('source', {'type': 'group'}), ('timestamp', -1), ('timestamp', True), ('timestamp', 'now'), ('webhookEventId', '')]:
@@ -63,6 +69,7 @@ class JoinWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual((await self.post_events([join_event(), invalid])).status_code, 400)
         self.module.save_group_join.assert_not_called()
 
+    # test_room_join_is_not_registered_as_group: ทดสอบ join ของ room ไม่ถูกบันทึกเป็น group
     async def test_room_join_is_not_registered_as_group(self):
         event = join_event()
         event['source'] = {'type': 'room', 'roomId': 'room-1'}
@@ -71,6 +78,7 @@ class JoinWebhookTests(unittest.IsolatedAsyncioTestCase):
 
 
 class JoinHistoryTests(unittest.TestCase):
+    # test_save_before_lookup_and_preserve_name_on_lookup_failure: ทดสอบบันทึกตัวกลุ่มก่อนค้นชื่อ และไม่ใช้ค่าว่างทับชื่อเดิมเมื่อค้นไม่สำเร็จ
     def test_save_before_lookup_and_preserve_name_on_lookup_failure(self):
         for name in ('Test group', None):
             with self.subTest(name=name):
@@ -78,6 +86,7 @@ class JoinHistoryTests(unittest.TestCase):
                 db = Mock()
                 history._client = db
                 event = SimpleNamespace(source=SimpleNamespace(type='group', group_id='group-1'), timestamp=1700000000000)
+                # lookup: จำลองคืนชื่อกลุ่มและยืนยันว่าบันทึกกลุ่มแล้วก่อนเริ่มค้นชื่อ
                 def lookup(group_id):
                     db.table.return_value.upsert.return_value.execute.assert_called_once()
                     return name
@@ -94,6 +103,7 @@ class JoinHistoryTests(unittest.TestCase):
                 else:
                     db.table.return_value.update.assert_not_called()
 
+    # test_database_error_returns_false_without_secret: ทดสอบฐานข้อมูลเสียขณะบันทึก join แล้วคืน False โดยไม่พิมพ์รายละเอียดลับ
     def test_database_error_returns_false_without_secret(self):
         history = load_history()
         history._client = Mock()
@@ -106,6 +116,7 @@ class JoinHistoryTests(unittest.TestCase):
 
 
 class GroupNameTests(unittest.TestCase):
+    # test_line_name_response_and_failures: ทดสอบชื่อกลุ่มจาก LINE การเข้ารหัส group ID และผล None เมื่อข้อมูลผิดหรือ timeout
     def test_line_name_response_and_failures(self):
         config = ModuleType('config')
         config.LINE_CHANNEL_ACCESS_TOKEN = 'SECRET'

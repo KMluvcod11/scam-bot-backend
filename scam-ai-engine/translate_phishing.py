@@ -6,6 +6,7 @@ import pandas as pd
 from dotenv import load_dotenv
 
 
+# translate_to_line: แปลงอีเมลหนึ่งแถวเป็นข้อความ LINE ภาษาไทยด้วยโมเดล; ลองสูงสุดสามครั้งก่อนส่ง exception ต่อ
 def translate_to_line(row, model):
     label = str(row['label'])
     text = str(row['text'])
@@ -49,10 +50,12 @@ def translate_to_line(row, model):
             time.sleep(30 if "429" in str(error) else 5)
 
 
+# translate_rows: แปลทีละแถว แยกผลสำเร็จและข้อผิดพลาดลง CSV; บันทึกเมื่อถูกขัดจังหวะและคืน exit code
 def translate_rows(df, model, output_file, failed_file):
     successful, failed = [], []
     interrupted = False
 
+    # save_progress: บันทึกรายการแปลสำเร็จและเลขแถวที่แปลไม่สำเร็จลงไฟล์ผลลัพธ์สองไฟล์
     def save_progress():
         pd.DataFrame(successful, columns=['label', 'thai_text']).to_csv(output_file, index=False, encoding='utf-8-sig')
         pd.DataFrame(failed, columns=['source_row', 'error_type']).to_csv(failed_file, index=False, encoding='utf-8-sig')
@@ -73,6 +76,7 @@ def translate_rows(df, model, output_file, failed_file):
     return 130 if interrupted else (1 if failed else 0)
 
 
+# main: ตรวจ CSV และกันเขียนทับผลเดิมก่อนตั้งค่าโมเดลเพื่อแปล; คืน exit code เมื่อจบหรือผิดพลาด
 def main():
     folder = Path(__file__).resolve().parent
     output_file = folder / 'translated_phishing_line_1500.csv'

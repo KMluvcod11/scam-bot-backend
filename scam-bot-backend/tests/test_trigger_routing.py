@@ -7,6 +7,7 @@ from test_llm_validation import load_detector
 
 
 class TriggerRoutingTests(unittest.TestCase):
+    # setUp: โหลด detector จำลองและอ่าน SCAM_TRIGGERS ผ่าน AST โดยไม่รัน config ที่โหลด secret
     def setUp(self):
         self.detector = load_detector()
         # อ่านรายการคำโดยไม่รัน config.py ที่โหลด .env
@@ -21,6 +22,7 @@ class TriggerRoutingTests(unittest.TestCase):
         else:
             self.fail("Missing SCAM_TRIGGERS")
 
+    # route: วิเคราะห์ข้อความด้วยคะแนนและผล LLM จำลอง แล้วคืนผลพร้อม mock เพื่อเช็กการเรียก
     def route(self, text, score, label="spam", decision=False):
         result = {"is_scam": decision, "risk_level": "low", "reason": "test"}
         with patch.object(self.detector, "find_similarity", return_value=(score, label, "ตัวอย่าง")), patch.object(
@@ -29,16 +31,19 @@ class TriggerRoutingTests(unittest.TestCase):
             actual = self.detector.analyze_message(text)
         return actual, llm
 
+    # test_s5_reaches_llm_at_observed_score: ทดสอบข้อความ S5 ถูกส่งให้ LLM เมื่อจำลองคะแนน 83.68%
     def test_s5_reaches_llm_at_observed_score(self):
         text = "กลุ่มลงทุนรับประกันกำไร 30% ทุกวัน ไม่มีความเสี่ยง ฝาก 1,000 บาทรับคืน 1,300 บาทภายในคืนนี้ สนใจโอนเงินเข้าบัญชีผู้ดูแลกลุ่มเพื่อเริ่มลงทุนได้ทันที"
         _, llm = self.route(text, 83.68)
         llm.assert_called_once_with(text, 83.68, "spam", matched_text="ตัวอย่าง")
 
+    # test_s7_reaches_llm_at_observed_score: ทดสอบข้อความ S7 ถูกส่งให้ LLM เมื่อจำลองคะแนน 81.06%
     def test_s7_reaches_llm_at_observed_score(self):
         text = "ผมเป็นเจ้าหน้าที่ตำรวจ พบว่าบัญชีคุณเกี่ยวข้องกับคดีฟอกเงิน ต้องโอนเงินทั้งหมดมายังบัญชีตรวจสอบของเจ้าหน้าที่ทันที และห้ามแจ้งครอบครัวระหว่างดำเนินการ"
         _, llm = self.route(text, 81.06)
         llm.assert_called_once_with(text, 81.06, "spam", matched_text="ตัวอย่าง")
 
+    # test_normal_context_uses_llm_decision: ทดสอบข้อความบริบททั่วไปใช้ผล LLM ไม่เตือนจากคำที่พบอย่างเดียว
     def test_normal_context_uses_llm_decision(self):
         for text in (
             "รายงานวันนี้ให้อธิบายความเสี่ยงของการลงทุนและยกตัวอย่างการออมเงินระยะยาว",
@@ -50,6 +55,7 @@ class TriggerRoutingTests(unittest.TestCase):
                 llm.assert_called_once()
                 self.assertIs(result["is_scam"], False)
 
+    # test_all_new_keywords_route_without_forcing_warning: ทดสอบคำเสี่ยงที่เพิ่มเข้ามาส่งต่อให้ LLM แต่ไม่ได้บังคับให้เตือน
     def test_all_new_keywords_route_without_forcing_warning(self):
         for keyword in ("ลงทุน", "รับประกันกำไร", "ไม่มีความเสี่ยง", "ตำรวจ", "ฟอกเงิน", "บัญชีตรวจสอบ", "ห้ามแจ้งครอบครัว"):
             with self.subTest(keyword=keyword):
@@ -57,6 +63,7 @@ class TriggerRoutingTests(unittest.TestCase):
                 llm.assert_called_once()
                 self.assertIs(result["is_scam"], False)
 
+    # test_long_message_with_keyword_reaches_llm_at_low_scores: ทดสอบข้อความยาวมีคำเสี่ยงและคะแนนต่ำยังได้วิเคราะห์ด้วย LLM
     def test_long_message_with_keyword_reaches_llm_at_low_scores(self):
         text = "ข้อความเกี่ยวกับการลงทุนสำหรับทดสอบการส่งต่อให้วิเคราะห์บริบท"
         for score, label in ((0, None), (64.99, "spam"), (65, "spam")):
@@ -64,6 +71,7 @@ class TriggerRoutingTests(unittest.TestCase):
                 _, llm = self.route(text, score, label)
                 llm.assert_called_once_with(text, score, label, matched_text="ตัวอย่าง")
 
+    # test_long_message_without_keyword_uses_llm_decision: ทดสอบข้อความยาวที่ไม่มีคำเสี่ยงยังใช้ผลจาก LLM
     def test_long_message_without_keyword_uses_llm_decision(self):
         text = "พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม"
         for score, label in ((0, None), (82.54, "ham"), (84.99, "ham"), (85, "ham")):
@@ -72,6 +80,7 @@ class TriggerRoutingTests(unittest.TestCase):
                 llm.assert_called_once_with(text, score, label, matched_text="ตัวอย่าง")
                 self.assertIs(result["is_scam"], False)
 
+    # test_short_text_without_keyword_still_skips_llm: ทดสอบข้อความกลุ่มสั้นที่ไม่มีคำเสี่ยงยังข้าม LLM
     def test_short_text_without_keyword_still_skips_llm(self):
         for text in ("กินข้าวยัง", "สวัสดีครับ"):
             with self.subTest(text=text):
@@ -79,6 +88,7 @@ class TriggerRoutingTests(unittest.TestCase):
                 llm.assert_not_called()
                 self.assertIs(result["is_scam"], False)
 
+    # test_job_payment_message_reaches_llm_at_observed_score: ทดสอบข้อความงานและค่าตอบแทนไม่มี keyword ยังถึง LLM เมื่อจำลองคะแนน ham 82.54%
     def test_job_payment_message_reaches_llm_at_observed_score(self):
         text = "ฝ่ายประสานงานแจ้งว่าคุณผ่านคัดเลือกงานตรวจรายการสินค้าแล้ว ก่อนเปิดบัญชีรับงานต้องชำระค่ารับรองตัวตน 387 บาทเข้าบัญชีบุคคลภายใน 12 นาที โดยจะคืนให้พร้อมค่าจ้างรอบแรก"
         self.assertFalse(any(keyword in text for keyword in self.detector.SCAM_TRIGGERS))
@@ -88,6 +98,7 @@ class TriggerRoutingTests(unittest.TestCase):
                 llm.assert_called_once_with(text, 82.54, "ham", matched_text="ตัวอย่าง")
                 self.assertIs(result["is_scam"], decision)
 
+    # test_short_risky_words_use_context_even_at_extreme_scores: ทดสอบคำเสี่ยงในข้อความสั้นใช้บริบท แม้คะแนนต่ำมากหรือสูงมาก
     def test_short_risky_words_use_context_even_at_extreme_scores(self):
         for text in ('ส่ง OTP มา', 'ส่ง otp มา', 'ขอรหัสผ่าน', 'โอนเงินทันที', 'อย่าส่ง OTP ให้ใคร'):
             for score in (0, 64, 99):

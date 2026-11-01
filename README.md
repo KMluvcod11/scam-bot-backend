@@ -84,6 +84,8 @@ For existing LINE groups whose dashboard member count is "ไม่ระบุ"
 
 ## Code guide
 
+See the [Thai code map](docs/CODE_MAP.md) for folder roles, function entry points, and which scripts call live services. Historical plans are kept in [docs/archive](docs/archive/README.md).
+
 - `scam-bot-backend/main.py`: webhook entry point and event routing.
 - `scam-bot-backend/detector.py`: vector retrieval, decision rules, and LLM response validation.
 - `scam-bot-backend/event_guard.py`: duplicate-event protection.

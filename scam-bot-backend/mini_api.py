@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 PRIVATE_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
 
 
+# get_mini_case_url: ตรวจ LIFF ID, channel ID และรหัสเคสก่อนคืนลิงก์รายละเอียดที่ไม่มีข้อมูลผู้ใช้; ค่าผิดคืน None
 def get_mini_case_url(case_id: str) -> str | None:
     liff_id = os.getenv("MINI_LIFF_ID", "").strip()
     channel_id = os.getenv("LINE_LOGIN_CHANNEL_ID", "").strip()
@@ -24,6 +25,7 @@ def get_mini_case_url(case_id: str) -> str | None:
     return None
 
 
+# mini_web_origins: อ่าน origin ที่อนุญาตให้เรียก Mini API; คืนรายการว่างเมื่อไม่ตั้งค่า และยก ValueError เมื่อรูปแบบผิด
 def mini_web_origins() -> list[str]:
     origin = os.getenv("MINI_WEB_ORIGIN", "").strip().rstrip("/")
     if not origin:
@@ -36,10 +38,12 @@ def mini_web_origins() -> list[str]:
     return [origin]
 
 
+# mini_error: สร้าง HTTPException พร้อม header ห้าม cache และห้ามส่ง referrer สำหรับข้อมูลส่วนตัว
 def mini_error(code: int, message: str) -> HTTPException:
     return HTTPException(code, message, headers=PRIVATE_HEADERS)
 
 
+# verify_line_owner: ส่ง ID token ให้ LINE ยืนยันและตรวจผู้ให้บริการ ช่องทาง กับอายุ; คืน owner หรือปฏิเสธด้วย 401/503
 def verify_line_owner(authorization: str) -> str:
     channel_id = os.getenv("LINE_LOGIN_CHANNEL_ID", "").strip()
     if not re.fullmatch(r"[0-9]+", channel_id):
@@ -80,6 +84,7 @@ def create_mini_router(history) -> APIRouter:
     """history: โมดูล mini_history หรือของจำลองที่มี list_cases/get_case/delete_all."""
     router = APIRouter(prefix="/api/mini", tags=["Mini App"])
 
+    # ask_history: เรียกงานประวัติแล้วคืนผลเดิม; แปลง HistoryUnavailable เป็น 503 โดยซ่อน error ดิบ
     def ask_history(action):
         # ระบบประวัติล่มตอบ 503 ข้อความกลาง ไม่ส่งรายละเอียด error กลับ
         try:
@@ -87,18 +92,21 @@ def create_mini_router(history) -> APIRouter:
         except history.HistoryUnavailable:
             raise mini_error(503, UNAVAILABLE_MESSAGE) from None
 
+    # read_history: ยืนยันเจ้าของด้วย token แล้วคืนรายการประวัติของคนนั้นพร้อม header ห้าม cache
     @router.get("/history")
     def read_history(authorization: str = Header(default="")):
         owner = verify_line_owner(authorization)
         cases = ask_history(lambda: history.list_cases(owner))
         return JSONResponse({"cases": cases}, headers=PRIVATE_HEADERS)
 
+    # delete_history: ยืนยันเจ้าของก่อนลบประวัติส่วนตัวของคนนั้น แล้วคืนจำนวนรายการที่ผู้ใช้มองเห็นและถูกลบ
     @router.delete("/history")
     def delete_history(authorization: str = Header(default="")):
         owner = verify_line_owner(authorization)
         deleted = ask_history(lambda: history.delete_all(owner))
         return JSONResponse({"deleted": deleted}, headers=PRIVATE_HEADERS)
 
+    # read_case: ยืนยันเจ้าของและรหัสเคสก่อนคืนรายละเอียด; เคสหายหรือผิดเจ้าของตอบ 404 แบบเดียวกัน
     @router.get("/cases/{case_id}")
     def read_case(case_id: str, authorization: str = Header(default="")):
         owner = verify_line_owner(authorization)

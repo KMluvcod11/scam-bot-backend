@@ -104,6 +104,7 @@ def build_case_detail(text: str, result: dict, received_at: str) -> dict:
 class LessonStore:
     """เก็บเจ้าของ บทเรียน และรายละเอียดใน RAM อายุ 15 นาที สูงสุด 1,000 เคส."""
     # ponytail: RAM process เดียวสำหรับเดโม; ใช้ที่เก็บร่วมเมื่อมีหลาย worker/ต้องเก็บข้าม restart
+    # __init__: เตรียมที่เก็บบทเรียนใน RAM พร้อมอายุ ความจุ และ lock; ปฏิเสธค่าขีดจำกัดที่ไม่เป็นบวก
     def __init__(self, ttl_seconds=900, max_entries=1000, clock=monotonic):
         if ttl_seconds <= 0 or max_entries <= 0:
             raise ValueError("Limits must be positive")
@@ -111,6 +112,7 @@ class LessonStore:
         self._cases = OrderedDict()
         self._lock = Lock()
 
+    # _expire: นำเคสที่หมดอายุด้านหน้าคิวออกจาก RAM ตามเวลาปัจจุบัน
     def _expire(self):
         now = self.clock()
         while self._cases and next(iter(self._cases.values()))[0] <= now:
@@ -130,6 +132,7 @@ class LessonStore:
             self._cases[case_id] = (self.clock() + self.ttl_seconds, owner, lesson, deepcopy(detail))
             return case_id
 
+    # get: คืนบทเรียนเฉพาะเคสที่ยังไม่หมดอายุและตรงเจ้าของ; กรณีอื่นคืน None เหมือนกัน
     def get(self, case_id: str, owner: str) -> str | None:
         with self._lock:
             self._expire()
@@ -139,6 +142,7 @@ class LessonStore:
             # ไม่แยกเหตุผลผิดเจ้าของ/ไม่มีเคส เพื่อไม่เปิดเผยว่าเคสของคนอื่นมีอยู่
             return None
 
+    # get_detail: คืนสำเนารายละเอียดพร้อมรหัสเคสให้เจ้าของที่ตรงกันเท่านั้น หรือ None เมื่อเปิดไม่ได้
     def get_detail(self, case_id: str, owner: str) -> dict | None:
         with self._lock:
             self._expire()

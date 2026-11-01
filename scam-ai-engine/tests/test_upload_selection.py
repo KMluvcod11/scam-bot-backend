@@ -10,12 +10,14 @@ import pandas as pd
 SCRIPT = Path(__file__).resolve().parents[1] / 'upload_to_supabase.py'
 select = runpy.run_path(str(SCRIPT))['select_new_rows']
 
+# database: สร้างฐานข้อมูลจำลองที่คืนผลทีละหน้าตามรายการ pages
 def database(pages):
     db = Mock()
     db.table.return_value.select.return_value.order.return_value.range.return_value.execute.side_effect = pages
     return db
 
 class SelectionTests(unittest.TestCase):
+    # run_uploader: รัน uploader ด้วย CSV และบริการจำลอง ตรวจ limit ห้าแถวและการหยุดเมื่อ insert ล้มเหลว
     def run_uploader(self, fail_insert=False):
         db = database([SimpleNamespace(data=[], count=0)])
         if fail_insert:
@@ -37,31 +39,38 @@ class SelectionTests(unittest.TestCase):
         self.assertEqual(len(db.table.return_value.insert.call_args.args[0]), 5)
         db.table.return_value.insert.return_value.execute.assert_called_once()
 
+    # test_limit_five_flushes_final_batch: ทดสอบว่า --limit 5 อัปโหลดเพียงห้าแถวแม้ยังไม่เต็ม batch
     def test_limit_five_flushes_final_batch(self):
         self.run_uploader()
 
+    # test_insert_error_does_not_retry: ทดสอบว่าการเขียน Dataset ล้มเหลวแล้วหยุดโดยไม่ส่ง insert ซ้ำ
     def test_insert_error_does_not_retry(self):
         self.run_uploader(fail_insert=True)
 
+    # test_pages_duplicates_and_original_indices: ทดสอบอ่านฐานข้อมูลหลายหน้า กรองข้อความซ้ำ และคง index ของแถว CSV เดิม
     def test_pages_duplicates_and_original_indices(self):
         df = pd.DataFrame({'thai_text': ['new', 'old', 'new', 'last'], 'label': ['ham'] * 4})
         db = database([SimpleNamespace(data=[{'thai_text': 'old', 'label': 'ham'}], count=2), SimpleNamespace(data=[{'thai_text': 'last', 'label': 'ham'}], count=2)])
         self.assertEqual(select(df, db).index.tolist(), [0])
         db.table.return_value.select.return_value.order.return_value.range.assert_any_call(1, 500)
 
+    # test_unrelated_existing_rows_do_not_skip_csv: ทดสอบว่าข้อมูลเดิมที่เป็นคนละข้อความไม่ทำให้ข้ามแถวใหม่ใน CSV
     def test_unrelated_existing_rows_do_not_skip_csv(self):
         df = pd.DataFrame({'thai_text': ['new'], 'label': ['spam']})
         db = database([SimpleNamespace(data=[{'thai_text': 'other', 'label': 'ham'}], count=1)])
         self.assertEqual(len(select(df, db)), 1)
 
+    # test_read_failure_stops: ทดสอบว่าการอ่านฐานข้อมูลล้มเหลวส่ง exception ต่อแทนการอัปโหลดต่อ
     def test_read_failure_stops(self):
         with self.assertRaises(RuntimeError):
             select(pd.DataFrame({'thai_text': ['new'], 'label': ['ham']}), database([RuntimeError()]))
 
+    # test_conflict_stops: ทดสอบว่าข้อความตรงกันแต่ label ขัดแย้งต้องหยุดให้ตรวจสอบ
     def test_conflict_stops(self):
         with self.assertRaises(ValueError):
             select(pd.DataFrame({'thai_text': ['same'], 'label': ['ham']}), database([SimpleNamespace(data=[{'thai_text': 'same', 'label': 'spam'}], count=1)]))
 
+    # test_all_existing_and_empty_database: ทดสอบผลเลือกแถวเมื่อทุกข้อความมีอยู่แล้วและเมื่อฐานข้อมูลว่าง
     def test_all_existing_and_empty_database(self):
         df = pd.DataFrame({'thai_text': ['same'], 'label': ['ham']})
         self.assertTrue(select(df, database([SimpleNamespace(data=[{'thai_text': 'same', 'label': 'ham'}], count=1)])).empty)

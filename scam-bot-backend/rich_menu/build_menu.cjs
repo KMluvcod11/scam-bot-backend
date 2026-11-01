@@ -3,9 +3,11 @@ const fs = require('node:fs');
 const path = require('node:path');
 const sharp = require('sharp');
 
+// main: รับโฟลเดอร์มาสคอตจาก CLI แล้วสร้าง menu.svg, menu.png และ preview.png; ส่งข้อผิดพลาดต่อให้ catch ด้านล่าง
 async function main() {
   const assetDirectory = process.argv[2];
   if (!assetDirectory) throw new Error('Usage: node build_menu.cjs <mascot asset directory>');
+  // mascot: อ่าน PNG ตามชื่อท่าทางแล้วคืน data URL เพื่อฝังภาพใน SVG โดยไม่อ้างไฟล์ภายนอก
   const mascot = (name) => `data:image/png;base64,${fs.readFileSync(path.join(assetDirectory, `${name}.png`)).toString('base64')}`;
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="2500" height="843" viewBox="0 0 2500 843">
   <defs>
@@ -42,4 +44,5 @@ async function main() {
   console.log('Created menu.svg, menu.png (2500x843), preview.png (1000px wide)');
 }
 
+// แจ้งความล้มเหลวของการสร้างภาพและตั้ง exit code ให้ผู้เรียกตรวจได้
 main().catch(() => { console.error('Unable to build image; check mascot directory and Sharp installation.'); process.exitCode = 1; });

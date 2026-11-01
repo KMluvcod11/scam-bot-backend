@@ -9,9 +9,11 @@ from test_webhook_threadpool import load_app
 
 
 class TimeoutTests(unittest.TestCase):
+    # setUp: เตรียม detector จำลองสำหรับทดสอบ timeout และ log แต่ละขั้น
     def setUp(self):
         self.detector = load_detector()
 
+    # test_embedding_timeout_stops_before_database: ทดสอบ embedding timeout หยุดก่อนค้นฐานข้อมูลและมีเวลาของขั้นตอนใน log
     def test_embedding_timeout_stops_before_database(self):
         d = self.detector
         d.client.models.embed_content.side_effect = httpx.ReadTimeout("secret")
@@ -22,6 +24,7 @@ class TimeoutTests(unittest.TestCase):
         self.assertNotIn("secret", str(output.call_args_list))
         self.assertIn("stage=embedding", str(output.call_args_list))
 
+    # test_database_timeout_stops_before_llm: ทดสอบฐานข้อมูล timeout หยุดก่อนเรียก LLM
     def test_database_timeout_stops_before_llm(self):
         d = self.detector
         d.client.models.embed_content.return_value = SimpleNamespace(embeddings=[SimpleNamespace(values=[1])])
@@ -32,6 +35,7 @@ class TimeoutTests(unittest.TestCase):
         self.assertIsNone(result["is_scam"])
         d.client.models.generate_content.assert_not_called()
 
+    # test_llm_timeout_does_not_warn_using_fallback: ทดสอบ LLM timeout ไม่ใช้กฎสำรองมาแจ้งเตือน
     def test_llm_timeout_does_not_warn_using_fallback(self):
         d = self.detector
         for error in (httpx.ReadTimeout("secret"), TimeoutError("secret")):
@@ -42,6 +46,7 @@ class TimeoutTests(unittest.TestCase):
             self.assertEqual(result, {"status": "error", "is_scam": None, "error_stage": "llm"})
             self.assertEqual(d.client.models.generate_content.call_count, 1)
 
+    # test_success_and_errors_add_timing_without_raw_exception: ทดสอบทั้งสำเร็จและล้มเหลวมีเวลาประมวลผล โดยไม่พิมพ์ exception ดิบ
     def test_success_and_errors_add_timing_without_raw_exception(self):
         timed_call = self.detector.timed_call
         with patch("builtins.print") as output:
@@ -58,6 +63,7 @@ class TimeoutTests(unittest.TestCase):
 
 
 class TraceTests(unittest.IsolatedAsyncioTestCase):
+    # test_concurrent_events_keep_trace_in_worker_and_reset: ทดสอบงานพร้อมกันมี trace แยกถึง worker และคืน context หลังจบงาน
     async def test_concurrent_events_keep_trace_in_worker_and_reset(self):
         app = load_app()
         trace_id = app.trace_id
@@ -65,6 +71,7 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
         barrier = threading.Barrier(2)
         seen = {}
 
+        # analyze: จำลองงานคู่ขนานที่รอ barrier แล้วตรวจว่า trace ใน worker ยังเป็นรหัสของงานเดิม
         def analyze(text):
             seen[text] = trace_id.get()
             barrier.wait(timeout=3)
@@ -72,6 +79,7 @@ class TraceTests(unittest.IsolatedAsyncioTestCase):
             return {"status": "error", "is_scam": None}
 
         app.analyze_message.side_effect = analyze
+        # event: สร้างข้อความ event ขั้นต่ำพร้อม reply token จำลองสำหรับตรวจการแยก trace
         def event(text):
             return SimpleNamespace(message=SimpleNamespace(text=text), reply_token="secret-token")
         with patch("builtins.print") as output:

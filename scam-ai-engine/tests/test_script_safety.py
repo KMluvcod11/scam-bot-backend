@@ -10,6 +10,7 @@ ENGINE = Path(__file__).resolve().parents[1]
 
 
 class ScriptSafetyTests(unittest.TestCase):
+    # test_imports_do_not_start_work: ทดสอบว่า import สคริปต์ไม่อ่าน config/CSV และไม่สร้าง client บริการจริง
     def test_imports_do_not_start_work(self):
         scripts = [ENGINE / 'upload_to_supabase.py', ENGINE / 'translate_phishing.py']
         scripts += list((ENGINE.parent / 'scam-bot-backend' / 'scripts').glob('smoke_*.py'))
@@ -19,6 +20,7 @@ class ScriptSafetyTests(unittest.TestCase):
             for operation in (env, read, db, ai):
                 operation.assert_not_called()
 
+    # test_translation_separates_failure_and_saves_before_interrupt: ทดสอบแยกแถวแปลเสียออกจากผลสำเร็จและบันทึกความคืบหน้าก่อนจบจาก Ctrl+C
     def test_translation_separates_failure_and_saves_before_interrupt(self):
         module = runpy.run_path(str(ENGINE / 'translate_phishing.py'))
         df = pd.DataFrame({'label': ['Safe Email'] * 3, 'text': ['a', 'b', 'c']})
@@ -36,6 +38,7 @@ class ScriptSafetyTests(unittest.TestCase):
                 self.assertEqual(errors['error_type'].tolist(), ['ValueError'])
                 self.assertNotIn('PRIVATE', str(logs.call_args_list))
 
+    # test_translation_retries_empty_results_then_raises: ทดสอบว่าผลแปลว่างถูกลองใหม่สามครั้งแล้วแจ้ง ValueError
     def test_translation_retries_empty_results_then_raises(self):
         module = runpy.run_path(str(ENGINE / 'translate_phishing.py'))
         model = Mock()
@@ -44,6 +47,7 @@ class ScriptSafetyTests(unittest.TestCase):
             module['translate_to_line']({'label': 'Safe Email', 'text': 'example'}, model)
         self.assertEqual(model.generate_content.call_count, 3)
 
+    # test_translation_refuses_to_overwrite: ทดสอบว่ามีไฟล์ผลแปลเดิมแล้วต้องหยุดก่อนอ่าน CSV เพื่อไม่เขียนทับ
     def test_translation_refuses_to_overwrite(self):
         module = runpy.run_path(str(ENGINE / 'translate_phishing.py'))
         with patch.object(Path, 'exists', return_value=True), patch('pandas.read_csv') as read, patch('builtins.print'):

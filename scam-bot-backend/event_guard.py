@@ -6,6 +6,7 @@ from time import monotonic
 
 class EventGuard:
     """จำงานที่กำลังทำ และ ID ที่ทำจบไม่เกิน 24 ชั่วโมง รวมสูงสุด 10,000 รายการ."""
+    # __init__: ตรวจอายุและความจุที่เป็นบวก แล้วเตรียมชุดงานกำลังทำ งานเสร็จ และ lock สำหรับกัน event ซ้ำ
     def __init__(self, ttl_seconds=86400, max_entries=10000, clock=monotonic):
         if ttl_seconds <= 0 or max_entries <= 0:
             raise ValueError("Cache limits must be positive")

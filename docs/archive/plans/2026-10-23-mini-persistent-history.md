@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, FastAPI, supabase-py, unittest · React + TypeScript + Vite, node:test
 
-**Spec:** `docs/superpowers/specs/2026-10-23-mini-persistent-history-design.md`
+**Spec:** [แบบที่เก็บย้อนหลัง](../specs/2026-10-23-mini-persistent-history-design.md)
 
 ## Global Constraints
 

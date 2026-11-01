@@ -21,6 +21,7 @@ import linebot.v3.webhooks
 from starlette.requests import Request
 
 
+# load_app: โหลด FastAPI และ LINE parser จริงโดยแทน AI, messaging, config และการบันทึกด้วย mock
 def load_app():
     # แทน config/detector/messaging ก่อน import: ไม่อ่าน .env หรือเรียกบริการจริง
     config = ModuleType("config")
@@ -56,6 +57,7 @@ def load_app():
     return module
 
 
+# text_event: คืน text event กลุ่มจำลองพร้อม ID และ reply token ที่แยกตาม number
 def text_event(text="ข้อความทดสอบ", number=1):
     return {
         "type": "message", "timestamp": 0, "mode": "active",
@@ -69,6 +71,7 @@ def text_event(text="ข้อความทดสอบ", number=1):
     }
 
 
+# image_event: แปลง text event จำลองเป็นรูปจาก LINE เพื่อใช้ทดสอบเส้นทาง OCR
 def image_event(number=1):
     event = text_event(number=number)
     event["message"] = {
@@ -81,9 +84,11 @@ def image_event(number=1):
 
 
 class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
+    # test_http_response_is_sent_before_slow_analysis: ทดสอบส่ง HTTP response ให้ LINE ก่อนงานวิเคราะห์ที่รอใน background
     async def test_http_response_is_sent_before_slow_analysis(self):
         started, release = threading.Event(), threading.Event()
 
+        # slow_analysis: จำลองวิเคราะห์ที่รอสัญญาณปล่อย เพื่อเช็กว่า HTTP response ถูกส่งก่อนงานเสร็จ
         def slow_analysis(text):
             started.set()
             if not release.wait(3):
@@ -99,6 +104,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
                  "http_version": "1.1", "asgi": {"version": "3.0"}}
         received = False
 
+        # receive: จำลอง ASGI receive ให้ body ครั้งแรก แล้วคืนสัญญาณ disconnect ในครั้งถัดไป
         async def receive():
             nonlocal received
             if not received:
@@ -112,6 +118,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
 
         body_sent = asyncio.Event()
 
+        # send: จำลอง ASGI send โดยส่งสัญญาณเมื่อ response body ถูกส่งแล้ว
         async def send(message):
             if message["type"] == "http.response.body":
                 body_sent.set()
@@ -130,6 +137,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.wait_for(task, timeout=5)
         self.module.analyze_message.assert_called_once()
 
+    # test_receipt_duplicate_and_total_logs_without_identifiers: ทดสอบ log รับงาน กันซ้ำ และเวลารวม โดยไม่เผย ID หรือ token ต้นฉบับ
     async def test_receipt_duplicate_and_total_logs_without_identifiers(self):
         with patch('builtins.print') as output:
             first = await self.post_events([text_event()])
@@ -145,6 +153,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         fingerprint = hashlib.sha256(b'event-1').hexdigest()[:12]
         self.assertEqual(logs.count('event=' + fingerprint), 3)
 
+    # test_rejected_webhook_logs_no_payload: ทดสอบ webhook ที่ถูกปฏิเสธไม่พิมพ์เนื้อหา payload ใน log
     async def test_rejected_webhook_logs_no_payload(self):
         with patch('builtins.print') as output:
             response = await self.post_events([text_event('SECRET_PAYLOAD')], valid_signature=False)
@@ -152,6 +161,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('rejected=400', str(output.call_args_list))
         self.assertNotIn('SECRET_PAYLOAD', str(output.call_args_list))
 
+    # test_private_history_false_has_timing_and_preserves_reply: ทดสอบบันทึกประวัติส่วนตัวคืน False ยังตอบได้และมี log เวลา/returned=false
     async def test_private_history_false_has_timing_and_preserves_reply(self):
         event = text_event()
         event['source'] = {'type': 'user', 'userId': 'offline-user'}
@@ -167,6 +177,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('returned=false', logs)
         self.assertIn('stage=event_total', logs)
 
+    # asyncSetUp: เปิด HTTP client แบบ ASGI ใน process เดียวกับแอปจำลอง และดัก log ของแต่ละ test
     async def asyncSetUp(self):
         self.module = load_app()
         self.http = httpx.AsyncClient(
@@ -177,9 +188,11 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.print_patch.start()
         self.addCleanup(self.print_patch.stop)
 
+    # asyncTearDown: ปิด HTTP client ทดสอบหลังแต่ละกรณีเพื่อคืน resource
     async def asyncTearDown(self):
         await self.http.aclose()
 
+    # post_events: ห่อ events เป็น webhook JSON ลงลายเซ็นด้วย secret จำลอง แล้วส่งเข้า client ทดสอบ
     async def post_events(self, events, valid_signature=True):
         body = json.dumps({"destination": "offline-bot", "events": events}).encode()
         signature = base64.b64encode(hmac.new(
@@ -190,6 +203,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             "X-Line-Signature": signature if valid_signature else "invalid",
         })
 
+    # test_safe_message_returns_200_without_reply: ทดสอบผลกลุ่มที่ไม่เข้าเกณฑ์เตือนตอบ webhook 200 โดยไม่ส่งข้อความ LINE
     async def test_safe_message_returns_200_without_reply(self):
         response = await self.post_events([text_event()])
         self.assertEqual(response.status_code, 200)
@@ -197,15 +211,18 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.assert_called_once_with("ข้อความทดสอบ")
         self.module.reply_to_line.assert_not_called()
 
+    # test_scam_reply_runs_after_analysis_in_worker_threads: ทดสอบส่งคำเตือนหลังวิเคราะห์ และทั้งสองขั้นทำงานใน worker
     async def test_scam_reply_runs_after_analysis_in_worker_threads(self):
         order = []
         loop_thread = threading.get_ident()
 
+        # analyze: จำลองผลเสี่ยงพร้อมตรวจว่าเรียกวิเคราะห์ใน worker และจดลำดับก่อนตอบ
         def analyze(text):
             self.assertNotEqual(threading.get_ident(), loop_thread)
             order.append("analyze")
             return {"is_scam": True, "risk_level": "high", "reason": "เหตุผลทดสอบ"}
 
+        # reply: จำลองส่งคำเตือนพร้อมตรวจ thread, token และข้อความ แล้วจดลำดับหลังวิเคราะห์
         def reply(token, message, card=None):
             self.assertNotEqual(threading.get_ident(), loop_thread)
             self.assertEqual(token, "reply-1")
@@ -221,6 +238,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(order, ["analyze", "reply"])
 
+    # test_health_responds_while_analysis_or_reply_is_waiting: ทดสอบ endpoint ตรวจสถานะยังตอบได้ขณะวิเคราะห์หรือส่ง LINE รออยู่
     async def test_health_responds_while_analysis_or_reply_is_waiting(self):
         # จำลองเครือข่ายที่ยังไม่ตอบ แล้วตรวจว่าคำขอ GET / ยังทำงานได้
         for stage in ("analysis", "reply"):
@@ -228,6 +246,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
                 started, release = threading.Event(), threading.Event()
                 scam = {"is_scam": True, "risk_level": "high", "reason": "test"}
 
+                # slow_call: จำลองงานวิเคราะห์หรือส่ง LINE ที่รอสัญญาณปล่อย เพื่อทดสอบว่า health endpoint ยังตอบได้
                 def slow_call(*args, **kwargs):
                     started.set()
                     if not release.wait(timeout=3):
@@ -253,6 +272,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
                     response = await asyncio.wait_for(task, timeout=5)
                 self.assertEqual(response.status_code, 200)
 
+    # test_multiple_events_keep_original_order: ทดสอบหลาย event ถูกวิเคราะห์ตามลำดับที่รับมา
     async def test_multiple_events_keep_original_order(self):
         response = await self.post_events([text_event("first", 1), text_event("second", 2)])
         self.assertEqual(response.status_code, 200)
@@ -261,6 +281,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             ["first", "second"],
         )
 
+    # test_empty_events_skip_analysis_and_group_image_uses_ocr_text: ทดสอบ events ว่างไม่วิเคราะห์ ส่วน image event ใช้ข้อความจาก OCR วิเคราะห์
     async def test_empty_events_skip_analysis_and_group_image_uses_ocr_text(self):
         event = text_event()
         event["message"] = {
@@ -277,11 +298,13 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         )
         self.module.reply_to_line.assert_not_called()
 
+    # test_invalid_signature_still_returns_400: ทดสอบ webhook ลายเซ็นผิดยังตอบ 400 ก่อนวิเคราะห์
     async def test_invalid_signature_still_returns_400(self):
         response = await self.post_events([text_event()], valid_signature=False)
         self.assertEqual(response.status_code, 400)
         self.module.analyze_message.assert_not_called()
 
+    # test_failed_reply_preserves_existing_200_behavior: ทดสอบส่งคำเตือนคืน False ยังคงตอบ webhook 200 และบันทึกผลส่งไม่สำเร็จ
     async def test_failed_reply_preserves_existing_200_behavior(self):
         self.module.analyze_message.return_value = {
             "is_scam": True, "risk_level": "medium", "reason": "test",
@@ -294,6 +317,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.module.save_detection.call_args.kwargs,
                          {"warning_attempted": True, "warning_sent": False})
 
+    # test_group_history_failure_preserves_reply_and_next_event: ทดสอบบันทึกประวัติกลุ่มเสียไม่ย้อนส่งคำตอบและยังทำ event ถัดไป
     async def test_group_history_failure_preserves_reply_and_next_event(self):
         self.module.analyze_message.return_value = {
             "is_scam": True, "risk_level": "high", "reason": "test",
@@ -316,6 +340,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("returned=true", logs)
         self.assertIn("claim=duplicate", logs)
 
+    # test_detection_error_stays_silent_and_next_event_is_processed: ทดสอบตรวจกลุ่มไม่ได้แล้วไม่ส่งคำเตือน แต่ยังประมวลผล event ถัดไป
     async def test_detection_error_stays_silent_and_next_event_is_processed(self):
         self.module.analyze_message.side_effect = [
             {"status": "error", "is_scam": None, "error_stage": "embedding"},
@@ -331,6 +356,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(failed_result["is_scam"])
         self.assertEqual(failed_result["error_stage"], "embedding")
 
+    # test_unexpected_analysis_error_does_not_stop_next_event: ทดสอบวิเคราะห์เกิด exception ที่ไม่คาดไว้แล้วยังทำ event ถัดไป
     async def test_unexpected_analysis_error_does_not_stop_next_event(self):
         self.module.analyze_message.side_effect = [
             RuntimeError("SECRET_TEST"), {"is_scam": False},
@@ -344,6 +370,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("stage=analysis", log)
         self.assertNotIn("SECRET_TEST", log)
 
+    # test_fallback_not_warning_is_not_logged_as_safe: ทดสอบ fallback ที่ไม่เตือนไม่ถูก log ว่าปลอดภัย
     async def test_fallback_not_warning_is_not_logged_as_safe(self):
         self.module.analyze_message.return_value = {"status": "fallback", "is_scam": False}
         with patch("builtins.print") as output:
@@ -354,6 +381,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("ปลอดภัย", log)
         self.assertIn("กฎสำรอง", log)
 
+    # test_fallback_warning_still_sends: ทดสอบ fallback ที่เข้าเกณฑ์เตือนยังส่งคำเตือน LINE
     async def test_fallback_warning_still_sends(self):
         self.module.analyze_message.return_value = {
             "status": "fallback", "is_scam": True, "risk_level": "medium", "reason": "test",
@@ -362,6 +390,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.module.reply_to_line.assert_called_once()
 
+    # test_reply_exception_does_not_stop_next_event: ทดสอบส่ง LINE เกิด exception แล้วยังทำ event ถัดไป
     async def test_reply_exception_does_not_stop_next_event(self):
         self.module.analyze_message.return_value = {
             "is_scam": True, "risk_level": "high", "reason": "test",

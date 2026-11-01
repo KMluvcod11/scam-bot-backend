@@ -353,15 +353,18 @@ TEMPLATES = {
  },
 }
 
+# normalize: ปรับ Unicode ช่องว่าง และตัวพิมพ์เพื่อใช้เทียบข้อความซ้ำ; คืนข้อความมาตรฐาน
 def normalize(text):
     return re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', text)).strip().casefold()
 
+# export_csv: เขียนรายการข้อมูลตามคอลัมน์ที่กำหนดเป็น CSV แบบ UTF-8 BOM; ข้ามคอลัมน์ส่วนเกิน
 def export_csv(path, rows, fields):
     with path.open('w', encoding='utf-8-sig', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
         writer.writeheader()
         writer.writerows(rows)
 
+# main: อ่าน snapshot และชุดเดิม สร้างตัวอย่าง 1,000 รายการ แล้วส่งออกชุดข้อมูลและรายงานตรวจคุณภาพ
 def main():
     snapshot = REPO / 'tmp/supabase_dataset_snapshot.json'
     existing = json.loads(snapshot.read_text(encoding='utf-8'))

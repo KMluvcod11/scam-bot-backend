@@ -12,6 +12,7 @@ import test_webhook_threadpool as fixtures
 
 
 class MemberHistoryTests(unittest.TestCase):
+    # test_sync_only_updates_missing_group_count: ทดสอบ sync เติมจำนวนสมาชิกเฉพาะกลุ่มที่ค่ายังว่าง โดยไม่แก้ประวัติ
     def test_sync_only_updates_missing_group_count(self):
         history = load_history()
         db = Mock()
@@ -30,6 +31,7 @@ class MemberHistoryTests(unittest.TestCase):
         db.table.return_value.update.assert_called_once_with({"member_count": 3})
         history.get_group_member_count.assert_called_once_with("group-1")
 
+    # test_valid_counts_use_existing_history_client: ทดสอบจำนวนสมาชิกที่ถูกต้องถูกบันทึกผ่าน client ประวัติที่มีอยู่
     def test_valid_counts_use_existing_history_client(self):
         for count in (0, 12):
             with self.subTest(count=count):
@@ -43,6 +45,7 @@ class MemberHistoryTests(unittest.TestCase):
                 self.assertNotIn("is_active", row)
                 self.assertNotIn("bot_joined_at", row)
 
+    # test_api_failure_preserves_previous_count: ทดสอบอ่านจำนวนสมาชิกไม่ได้แล้วไม่เขียนทับค่าเดิม
     def test_api_failure_preserves_previous_count(self):
         history = load_history()
         history._client = Mock()
@@ -50,6 +53,7 @@ class MemberHistoryTests(unittest.TestCase):
         self.assertFalse(history.save_group_members(event))
         history._client.table.assert_not_called()
 
+    # test_join_saves_count_after_registering_group: ทดสอบบันทึกจำนวนสมาชิกหลังลงทะเบียนกลุ่มสำเร็จ
     def test_join_saves_count_after_registering_group(self):
         history = load_history()
         history._client = Mock()
@@ -61,6 +65,7 @@ class MemberHistoryTests(unittest.TestCase):
         self.assertTrue(writes[0].args[0]["is_active"])
         self.assertEqual(writes[1].args[0]["member_count"], 7)
 
+    # test_database_failure_returns_false_without_secret: ทดสอบเขียนจำนวนสมาชิกเสียแล้วคืน False โดยไม่เผยข้อความ error ลับ
     def test_database_failure_returns_false_without_secret(self):
         history = load_history()
         history.get_group_member_count.return_value = 7
@@ -73,6 +78,7 @@ class MemberHistoryTests(unittest.TestCase):
 
 
 class MemberApiTests(unittest.TestCase):
+    # test_count_validation_and_timeout: ทดสอบตรวจชนิดจำนวนสมาชิก URL ที่เข้ารหัส และ timeout ของคำขอ LINE
     def test_count_validation_and_timeout(self):
         # ใช้ fixture โหลด messaging โดยไม่อ่าน secret จริง
         import importlib.util
@@ -104,6 +110,7 @@ class MemberWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    # event: สร้าง event สมาชิกเข้า/ออกพร้อมข้อมูล joined หรือ left ตามชนิดที่ระบุ
     def event(self, kind):
         event = join_event()
         event["type"] = kind
@@ -112,6 +119,7 @@ class MemberWebhookTests(unittest.IsolatedAsyncioTestCase):
         event[key] = {"members": [{"type": "user", "userId": "offline-user"}]}
         return event
 
+    # test_member_changes_run_once_in_worker_without_detection: ทดสอบสมาชิกเข้า/ออกแต่ละ event ทำงานครั้งเดียวใน worker โดยไม่เรียกตรวจข้อความ
     async def test_member_changes_run_once_in_worker_without_detection(self):
         workers = []
         loop_thread = threading.get_ident()
@@ -124,16 +132,19 @@ class MemberWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.module.save_detection.assert_not_called()
 
+    # test_failure_keeps_webhook_alive: ทดสอบอัปเดตสมาชิกไม่สำเร็จไม่ทำให้ webhook หยุดตอบรับ
     async def test_failure_keeps_webhook_alive(self):
         self.module.save_group_members.return_value = False
         self.assertEqual((await self.post_events([self.event("memberLeft")])).status_code, 200)
 
+    # test_invalid_member_event_rejects_entire_batch: ทดสอบ event สมาชิกไม่สมบูรณ์ถูกปฏิเสธทั้งชุดก่อนบันทึก
     async def test_invalid_member_event_rejects_entire_batch(self):
         invalid = self.event("memberLeft")
         invalid["source"] = {"type": "group"}
         self.assertEqual((await self.post_events([self.event("memberJoined"), invalid])).status_code, 400)
         self.module.save_group_members.assert_not_called()
 
+    # test_room_members_are_not_saved_as_groups: ทดสอบสมาชิกของ room ไม่ถูกบันทึกเป็นสมาชิก group
     async def test_room_members_are_not_saved_as_groups(self):
         event = self.event("memberJoined")
         event["source"] = {"type": "room", "roomId": "offline-room"}

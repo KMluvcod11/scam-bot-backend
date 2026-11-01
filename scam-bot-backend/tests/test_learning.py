@@ -11,6 +11,7 @@ import test_webhook_threadpool as fixtures
 from test_private_chat import private_event, result
 
 
+# postback: สร้าง event กดบทเรียนโดยผูก learn:case_id กับเจ้าของที่ระบุ
 def postback(case_id, number=10, owner="offline-user"):
     event = private_event(number=number)
     event.pop("message")
@@ -25,12 +26,14 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    # create_case: ส่งข้อความผ่าน webhook จำลองแล้วคืนรหัสบทเรียนจากคำตอบ เพื่อใช้ทดสอบการกดปุ่ม
     async def create_case(self, text="ส่ง OTP มา", number=1, status="risk_found"):
         self.module.analyze_message.return_value = result(status)
         response = await self.post_events([private_event(text, number)])
         self.assertEqual(response.status_code, 200)
         return self.module.reply_to_line.call_args.kwargs["learn_case_id"]
 
+    # test_button_reads_original_case_not_latest_without_ai: ทดสอบปุ่มบทเรียนเปิดเคสเดิมที่ผูกไว้ ไม่ใช่เคสล่าสุด และไม่เรียก AI ซ้ำ
     async def test_button_reads_original_case_not_latest_without_ai(self):
         first = await self.create_case("ส่ง OTP มา", 1)
         second = await self.create_case("รับประกันกำไร ไม่มีความเสี่ยง", 2)
@@ -42,6 +45,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("รับประกันกำไร", lesson)
         self.module.analyze_message.assert_not_called()
 
+    # test_time_word_lesson_asks_about_context_without_changing_result: ทดสอบคำบอกเวลาใช้แนะนำให้ดูบริบท โดยไม่เปลี่ยนผลตรวจเดิมให้เป็นเสี่ยง
     async def test_time_word_lesson_asks_about_context_without_changing_result(self):
         for number, text in enumerate((
             "เริ่มงานได้ทันที ก่อนเริ่มโอนค่าประกัน 399 บาท",
@@ -59,6 +63,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         await self.post_events([private_event("เริ่มงานได้ทันที ไม่มีค่าสมัคร", 3)])
         self.assertNotIn("learn_case_id", self.module.reply_to_line.call_args.kwargs)
 
+    # test_owner_mismatch_unknown_and_expired_do_not_disclose: ทดสอบเคสผิดเจ้าของ ไม่มีอยู่ หรือหมดอายุให้คำตอบปฏิเสธเหมือนกัน
     async def test_owner_mismatch_unknown_and_expired_do_not_disclose(self):
         now = [0]
         self.module.lesson_store = self.module.LessonStore(clock=lambda: now[0])
@@ -73,12 +78,14 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.module.reply_to_line.call_args.args[1], denied)
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
+    # test_duplicate_click_is_handled_once: ทดสอบ event กดบทเรียนซ้ำถูกตอบเพียงครั้งเดียว
     async def test_duplicate_click_is_handled_once(self):
         case_id = await self.create_case()
         self.module.reply_to_line.reset_mock()
         await self.post_events([postback(case_id), postback(case_id)])
         self.module.reply_to_line.assert_called_once()
 
+    # test_signature_and_required_fields_checked_before_learning: ทดสอบตรวจลายเซ็นและฟิลด์บังคับก่อนเปิดบทเรียน
     async def test_signature_and_required_fields_checked_before_learning(self):
         case_id = await self.create_case()
         self.module.reply_to_line.reset_mock()
@@ -96,6 +103,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.post_events([event])).status_code, 400)
         self.module.reply_to_line.assert_not_called()
 
+    # test_group_and_room_cannot_open_private_lesson: ทดสอบกลุ่มและ room ไม่สามารถเปิดบทเรียนส่วนตัว
     async def test_group_and_room_cannot_open_private_lesson(self):
         case_id = await self.create_case()
         self.module.reply_to_line.reset_mock()
@@ -107,6 +115,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.module.analyze_message.assert_not_called()
 
+    # test_no_button_for_conversation_errors_or_inconsistent_result: ทดสอบคำสนทนา error และผลขัดแย้งไม่สร้างปุ่มหรือเคสบทเรียน
     async def test_no_button_for_conversation_errors_or_inconsistent_result(self):
         for number, status in enumerate(("conversation", "error", "fallback"), 1):
             self.module.analyze_message.return_value = result(status)
@@ -117,6 +126,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
+    # test_negative_and_uncertain_reply_without_button_or_stored_lesson: ทดสอบผลไม่เสี่ยง/ไม่แน่ใจมีการ์ดและรหัสประวัติ แต่ไม่สร้างบทเรียนใน RAM
     async def test_negative_and_uncertain_reply_without_button_or_stored_lesson(self):
         for number, status in enumerate(("no_risk_found", "uncertain"), 1):
             text = "คำเตือน: อย่าส่ง OTP ให้ใคร"
@@ -133,6 +143,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
             self.assertRegex(self.module.save_detection.call_args.kwargs["case_id"], r"^[0-9a-f]{32}$")
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
+    # test_group_warning_gets_card_without_button_or_lesson: ทดสอบคำเตือนกลุ่มมีการ์ด แต่ไม่มีปุ่ม ลิงก์ส่วนตัว หรือบทเรียนใน RAM
     async def test_group_warning_gets_card_without_button_or_lesson(self):
         self.module.analyze_message.return_value = {**result("risk_found"), "risk_level": "high"}
         await self.post_events([fixtures.text_event()])
@@ -145,6 +156,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("HIGH", reply)
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
+    # test_store_full_or_learning_error_preserves_detection_reply: ทดสอบที่เก็บบทเรียนเต็มหรือสร้างบทเรียนพังยังตอบผลตรวจได้
     async def test_store_full_or_learning_error_preserves_detection_reply(self):
         self.module.lesson_store = self.module.LessonStore(max_entries=1)
         first = await self.create_case()
@@ -159,6 +171,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
             await self.post_events([private_event(number=3)])
         self.assertIn("พบสัญญาณเสี่ยง", self.module.reply_to_line.call_args.args[1])
 
+    # test_missing_owner_never_creates_case: ทดสอบไม่มีเจ้าของไม่สร้างเคสหรือปุ่มรายละเอียดส่วนตัว
     async def test_missing_owner_never_creates_case(self):
         event = private_event()
         event["source"].pop("userId")
@@ -170,12 +183,14 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("footer", kwargs["card"]["contents"])
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
+    # test_restart_invalidates_old_button: ทดสอบเปลี่ยนที่เก็บ RAM หลังรีสตาร์ตแล้วปุ่มบทเรียนเก่าเปิดไม่ได้
     async def test_restart_invalidates_old_button(self):
         case_id = await self.create_case()
         self.module.lesson_store = self.module.LessonStore()
         await self.post_events([postback(case_id)])
         self.assertIn("ไม่สามารถเปิดบทเรียน", self.module.reply_to_line.call_args.args[1])
 
+    # test_send_failure_does_not_stop_following_click: ทดสอบส่งบทเรียนไม่สำเร็จไม่ขัดขวางการกดครั้งถัดไป
     async def test_send_failure_does_not_stop_following_click(self):
         case_id = await self.create_case()
         self.module.reply_to_line.reset_mock()
@@ -190,6 +205,7 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    # test_text_result_sends_card_and_opens_case_for_every_status: ทดสอบผลข้อความทั้งสามสถานะมีการ์ดและรหัสเคสที่ใช้บันทึกประวัติ
     async def test_text_result_sends_card_and_opens_case_for_every_status(self):
         titles = {"risk_found": "พบสัญญาณเสี่ยง", "uncertain": "ควรตรวจเพิ่ม", "no_risk_found": "ยังไม่พบสัญญาณเสี่ยง"}
         for number, (status, title) in enumerate(titles.items(), 1):
@@ -202,6 +218,7 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(saved.args[1]["status"], status)
                 self.assertRegex(saved.kwargs["case_id"], r"^[0-9a-f]{32}$")
 
+    # test_private_image_gets_card_with_ocr_text_case: ทดสอบภาพส่วนตัวได้การ์ดผลตรวจที่มีข้อความ OCR
     async def test_private_image_gets_card_with_ocr_text_case(self):
         event = fixtures.image_event(1)
         event["source"] = {"type": "user", "userId": "offline-user"}
@@ -213,6 +230,7 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("พบสัญญาณเสี่ยง", reply)
         self.assertIn(self.module.extract_text_from_image.return_value["text"][:20], str(card))
 
+    # test_card_link_and_saved_row_share_case_id: ทดสอบลิงก์ในการ์ดและแถวประวัติใช้ case_id เดียวกัน
     async def test_card_link_and_saved_row_share_case_id(self):
         self.module.analyze_message.return_value = result("uncertain")
         with patch.dict(os.environ, {"MINI_LIFF_ID": "1234567890-TestApp", "LINE_LOGIN_CHANNEL_ID": "1234567890"}):
@@ -223,12 +241,14 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertRegex(saved_case, r"^[0-9a-f]{32}$")
         self.assertTrue(uri.endswith("case=" + saved_case))
 
+    # test_redelivered_event_gets_same_case_id: ทดสอบ event ID เดิมให้ case_id เดิม และ event ต่างกันให้รหัสต่างกัน
     def test_redelivered_event_gets_same_case_id(self):
         first = self.module.case_id_for("line-event-1")
         self.assertEqual(first, self.module.case_id_for("line-event-1"))
         self.assertNotEqual(first, self.module.case_id_for("line-event-2"))
         self.assertRegex(first, r"^[0-9a-f]{32}$")
 
+    # test_private_image_saves_ocr_text_and_case_id: ทดสอบภาพส่วนตัวส่งข้อความ OCR และรหัสเคสให้ฟังก์ชันบันทึกประวัติ
     async def test_private_image_saves_ocr_text_and_case_id(self):
         event = fixtures.image_event(3)
         event["source"] = {"type": "user", "userId": "offline-user"}
@@ -238,12 +258,14 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(kwargs["image_text"], self.module.extract_text_from_image.return_value["text"])
         self.assertRegex(kwargs["case_id"], r"^[0-9a-f]{32}$")
 
+    # test_no_case_id_for_group_messages: ทดสอบข้อความกลุ่มไม่ส่ง case_id ส่วนตัวให้ประวัติ
     async def test_no_case_id_for_group_messages(self):
         self.module.analyze_message.return_value = result("risk_found")
         await self.post_events([fixtures.text_event("โอนเงินด่วน", 8)])
         if self.module.save_detection.called:
             self.assertNotIn("case_id", self.module.save_detection.call_args.kwargs)
 
+    # test_group_image_warning_gets_card_without_button: ทดสอบภาพเสี่ยงในกลุ่มมีการ์ดโดยไม่มีปุ่มส่วนตัวหรือบทเรียนใน RAM
     async def test_group_image_warning_gets_card_without_button(self):
         event = fixtures.image_event(2)
         with patch.object(self.module, "analyze_message", return_value=result("risk_found")):
@@ -256,6 +278,7 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LearningPayloadTests(unittest.TestCase):
+    # test_template_payload_limits_and_no_private_data_in_action: ทดสอบปุ่มบทเรียนอยู่ในขนาดที่ LINE รองรับและ action ไม่มีข้อความหรือข้อมูลส่วนตัว
     def test_template_payload_limits_and_no_private_data_in_action(self):
         config = ModuleType("config")
         config.LINE_CHANNEL_ACCESS_TOKEN = "offline-token"

@@ -14,6 +14,7 @@ SPEC.loader.exec_module(observability)
 
 
 class ObservabilityErrorTests(unittest.TestCase):
+    # test_api_error_has_safe_fields_and_preserves_exception: ทดสอบ log มีชนิดและรหัส API error ที่ปลอดภัย พร้อมส่ง exception เดิมต่อ
     def test_api_error_has_safe_fields_and_preserves_exception(self):
         error = RuntimeError("SECRET_MESSAGE")
         error.code = 503
@@ -32,6 +33,7 @@ class ObservabilityErrorTests(unittest.TestCase):
         finally:
             observability.trace_id.reset(token)
 
+    # test_untrusted_fields_are_omitted: ทดสอบรหัสและสถานะ error นอกชุดที่อนุญาตไม่ถูกนำไป log
     def test_untrusted_fields_are_omitted(self):
         for code, status in [("503 SECRET", "UNAVAILABLE\nSECRET"),
                              (True, {"SECRET": "value"}), (9999, ["UNAVAILABLE"])]:
@@ -40,6 +42,7 @@ class ObservabilityErrorTests(unittest.TestCase):
                 error.code, error.status = code, status
                 self.assertEqual(observability.error_summary(error), "type=RuntimeError")
 
+    # test_database_codes_are_logged_without_error_text: ทดสอบ log รหัส SQLSTATE/PostgREST โดยไม่มีข้อความ error ของฐานข้อมูล
     def test_database_codes_are_logged_without_error_text(self):
         for code in ("42501", "42P01", "PGRST116"):
             error = RuntimeError("SECRET_MESSAGE")
@@ -48,9 +51,11 @@ class ObservabilityErrorTests(unittest.TestCase):
             self.assertEqual(observability.error_summary(error),
                              f"type=RuntimeError code={code}")
 
+    # test_error_without_sdk_fields_still_works: ทดสอบ exception ทั่วไปที่ไม่มีฟิลด์ SDK ยังสรุปชนิด error ได้
     def test_error_without_sdk_fields_still_works(self):
         self.assertEqual(observability.error_summary(TimeoutError("SECRET")), "type=TimeoutError")
 
+    # test_success_logs_duration_and_keeps_result: ทดสอบ timed_call คืนผลเดิม ส่ง arguments ครบ และบันทึกเวลา
     def test_success_logs_duration_and_keeps_result(self):
         operation = Mock(return_value={"ok": True})
         with patch.object(observability, 'monotonic', side_effect=[10, 12.5]), patch("builtins.print") as output:
@@ -60,6 +65,7 @@ class ObservabilityErrorTests(unittest.TestCase):
         self.assertIn('[TIME] stage=llm:test elapsed=2.50s', str(output.call_args_list))
         self.assertNotIn('private', str(output.call_args_list))
 
+    # test_false_result_is_not_reported_as_success: ทดสอบผล False แสดง returned=false ไม่ถูกรายงานว่า operation สำเร็จ
     def test_false_result_is_not_reported_as_success(self):
         with patch('builtins.print') as output:
             self.assertIs(observability.timed_call('history', lambda: False), False)

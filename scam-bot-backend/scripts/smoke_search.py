@@ -7,6 +7,7 @@ from supabase import create_client
 from dotenv import load_dotenv
 
 
+# main: สร้าง embedding และค้น Supabase จริงด้วยข้อความสังเคราะห์; แสดงคะแนนกับ label และคืน exit code
 def main():
     try:
         load_dotenv(Path(__file__).resolve().parents[1] / '.env')

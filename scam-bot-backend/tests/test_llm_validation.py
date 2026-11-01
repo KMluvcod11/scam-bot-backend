@@ -52,10 +52,12 @@ def load_detector():
 
 
 class LLMValidationTests(unittest.TestCase):
+    # setUp: เตรียม detector จำลองและผล LLM ที่ถูกต้องเป็นฐานสำหรับทดสอบ validation
     def setUp(self):
         self.detector = load_detector()
         self.valid = {"is_scam": False, "risk_level": "low", "reason": "ข้อความทั่วไป"}
 
+    # test_valid_boolean_and_all_risk_levels: ทดสอบรับ boolean และระดับความเสี่ยงทั้งสามค่าที่ถูกต้องจาก LLM
     def test_valid_boolean_and_all_risk_levels(self):
         for flag in (True, False):
             for level in ("low", "medium", "high"):
@@ -63,11 +65,13 @@ class LLMValidationTests(unittest.TestCase):
                     value = {**self.valid, "is_scam": flag, "risk_level": level}
                     self.assertEqual(self.detector.validate_llm_result(value), value)
 
+    # test_reject_non_objects: ทดสอบปฏิเสธผล LLM ที่ไม่ใช่ JSON object
     def test_reject_non_objects(self):
         for value in (None, [], "false", False, 1):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 self.detector.validate_llm_result(value)
 
+    # test_reject_missing_fields: ทดสอบปฏิเสธผล LLM ที่ขาดฟิลด์บังคับ
     def test_reject_missing_fields(self):
         for key in self.valid:
             value = dict(self.valid)
@@ -75,6 +79,7 @@ class LLMValidationTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 self.detector.validate_llm_result(value)
 
+    # test_reject_wrong_field_types_and_values: ทดสอบปฏิเสธชนิดหรือค่าของฟิลด์ LLM ที่ไม่ตรงสัญญาข้อมูล
     def test_reject_wrong_field_types_and_values(self):
         invalid = {
             "is_scam": ["false", "true", 0, 1, None, []],
@@ -86,6 +91,7 @@ class LLMValidationTests(unittest.TestCase):
                 with self.subTest(key=key, value=value), self.assertRaises(ValueError):
                     self.detector.validate_llm_result({**self.valid, key: value})
 
+    # run_responses: กำหนดลำดับคำตอบโมเดลจำลองแล้วรันวิเคราะห์ เพื่อให้ตรวจผลและจำนวนครั้งที่ลองโมเดล
     def run_responses(self, responses, score=85):
         generate = self.detector.client.models.generate_content
         generate.side_effect = [SimpleNamespace(text=text) for text in responses]
@@ -93,11 +99,13 @@ class LLMValidationTests(unittest.TestCase):
             result = self.detector.analyze_with_llm("ข้อความทดสอบ", score, "spam")
         return result, generate
 
+    # test_valid_false_does_not_trigger_failover: ทดสอบ is_scam=False ที่ถูกต้องไม่ถูกเข้าใจว่าโมเดลล้มเหลว
     def test_valid_false_does_not_trigger_failover(self):
         result, generate = self.run_responses([json.dumps(self.valid)])
         self.assertIs(result["is_scam"], False)
         self.assertEqual(generate.call_count, 1)
 
+    # test_bad_response_tries_next_model: ทดสอบคำตอบผิดรูปแบบทำให้ลองโมเดลถัดไปตามลำดับ
     def test_bad_response_tries_next_model(self):
         for bad in ("not json", "null", "[]", None,
                     json.dumps({**self.valid, "is_scam": "false"}),
@@ -111,6 +119,7 @@ class LLMValidationTests(unittest.TestCase):
                     ["gemini-3.5-flash-lite", "gemini-3.6-flash"],
                 )
 
+    # test_both_invalid_keep_existing_fallback_boundary: ทดสอบคำตอบเสียทั้งสองโมเดลใช้เกณฑ์กฎสำรองที่ขอบเขตคะแนนเดิม
     def test_both_invalid_keep_existing_fallback_boundary(self):
         for score, expected in ((79.99, False), (80.0, True), (90.0, True)):
             with self.subTest(score=score):
@@ -122,6 +131,7 @@ class LLMValidationTests(unittest.TestCase):
                 if expected:
                     self.assertEqual(result["risk_level"], "medium")
 
+    # test_reason_length_boundary: ทดสอบความยาวเหตุผลที่ขอบเขตสูงสุดและเมื่อยาวเกิน
     def test_reason_length_boundary(self):
         for size, accepted in ((499, True), (500, True), (501, False)):
             with self.subTest(size=size):
@@ -132,6 +142,7 @@ class LLMValidationTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         self.detector.validate_llm_result(value)
 
+    # test_identical_run_boundary: ทดสอบขอบเขตจำนวนอักขระซ้ำติดกันที่ทำให้เหตุผลไม่ผ่าน
     def test_identical_run_boundary(self):
         for character in ("0", "ก", "!", " ", "\n"):
             for size in (19, 20, 21):
@@ -143,10 +154,12 @@ class LLMValidationTests(unittest.TestCase):
                         with self.assertRaises(ValueError):
                             self.detector.validate_llm_result(value)
 
+    # test_normal_thai_reason_with_numbers_is_unchanged: ทดสอบเหตุผลภาษาไทยปกติที่มีตัวเลขไม่ถูกแก้หรือปฏิเสธ
     def test_normal_thai_reason_with_numbers_is_unchanged(self):
         value = {**self.valid, "reason": "ชักชวนทำงานรายได้ 1,500 บาท แต่ให้โอนค่าประกัน 300 บาทก่อนเริ่มงาน"}
         self.assertEqual(self.detector.validate_llm_result(value), value)
 
+    # test_garbled_reason_tries_second_model_without_logging_garbage: ทดสอบเหตุผลเสียทำให้ลองโมเดลที่สองโดยไม่พิมพ์เนื้อหาที่เสียลง log
     def test_garbled_reason_tries_second_model_without_logging_garbage(self):
         for reason in ("เข้าข่ายหลอกลวง" + "0" * 2000, "ab" * 251, "เลข" + "0" * 20):
             with self.subTest(length=len(reason)):
@@ -164,6 +177,7 @@ class LLMValidationTests(unittest.TestCase):
                 self.assertNotIn(reason, log)
                 self.assertIn("LLM FAILOVER", log)
 
+    # test_both_garbled_reasons_use_existing_fallback: ทดสอบเหตุผลเสียทั้งสองโมเดลใช้กฎสำรองโดยไม่คัดลอกเหตุผลเสียมาแสดง
     def test_both_garbled_reasons_use_existing_fallback(self):
         bad = json.dumps({**self.valid, "reason": "0" * 2000})
         for score, expected in ((79.99, False), (80.0, True)):

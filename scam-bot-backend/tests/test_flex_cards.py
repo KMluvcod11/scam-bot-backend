@@ -36,6 +36,7 @@ STATUSES = {"risk_found": ("พบสัญญาณเสี่ยง", "alert"
 FORBIDDEN = ("ระดับความเสี่ยง", "HIGH", "MEDIUM", "LOW", "สูง", "ปานกลาง", "ต่ำ", "100%")
 
 
+# walk: ไล่ dict ทุกระดับในการ์ด รวมรายการซ้อน เพื่อให้ tests ตรวจองค์ประกอบ Flex ได้
 def walk(node):
     if isinstance(node, dict):
         yield node
@@ -47,6 +48,7 @@ def walk(node):
 
 
 class ResultCardTests(unittest.TestCase):
+    # card: สร้างการ์ดจากผลตรวจจำลอง โดยเปิดให้แต่ละ test เปลี่ยนสถานะ เหตุผล และตัวเลือก
     def card(self, status="risk_found", reason="อ้างสิทธิ์คืนเงิน", **kwargs):
         result = {"status": status, "is_scam": status == "risk_found", "risk_level": "high",
                   "reason": reason}
@@ -54,6 +56,7 @@ class ResultCardTests(unittest.TestCase):
         options.update(kwargs)
         return flex_cards.build_result_card(result, **options)
 
+    # test_matrix_private_group_text_image_every_status: ทดสอบการ์ดทุกสถานะทั้งข้อความ/รูปและแชตส่วนตัว/กลุ่ม ว่าจัดเนื้อหา สี และปุ่มถูกต้อง
     def test_matrix_private_group_text_image_every_status(self):
         with patch.dict(os.environ, LIVE_ENV):
             for status, (title, pose, note) in STATUSES.items():
@@ -85,11 +88,13 @@ class ResultCardTests(unittest.TestCase):
                                 self.assertEqual(button["action"], {"type": "uri", "label": "ดูรายละเอียด",
                                     "uri": f"https://liff.line.me/1234567890-TestApp?case={CASE_ID}"})
 
+    # test_group_never_gets_button_even_with_case_id_or_postback: ทดสอบการ์ดกลุ่มไม่มีปุ่ม แม้ส่ง case_id และอนุญาต postback
     def test_group_never_gets_button_even_with_case_id_or_postback(self):
         with patch.dict(os.environ, LIVE_ENV):
             card = self.card(group=True, allow_postback=True)
         self.assertNotIn("footer", card["contents"])
 
+    # test_status_designs_differ_and_only_risk_is_pink_warning: ทดสอบรูปแบบแต่ละสถานะแตกต่างกันและใช้กรอบเตือนสีชมพูเฉพาะผลเสี่ยง
     def test_status_designs_differ_and_only_risk_is_pink_warning(self):
         notes = {}
         for status in STATUSES:
@@ -98,6 +103,7 @@ class ResultCardTests(unittest.TestCase):
         self.assertEqual(notes["risk_found"], "#FDECEE")
         self.assertEqual(len(set(notes.values())), 3)
 
+    # test_group_fallback_warning_uses_risk_card: ทดสอบกฎสำรองที่เตือนในกลุ่มใช้การ์ดเสี่ยง ส่วน fallback ที่ไม่เตือนไม่สร้างการ์ด
     def test_group_fallback_warning_uses_risk_card(self):
         card = flex_cards.build_result_card({"status": "fallback", "is_scam": True, "risk_level": "medium",
                                              "reason": "ใกล้เคียง 85% (ระบบสำรอง)"},
@@ -107,6 +113,7 @@ class ResultCardTests(unittest.TestCase):
         self.assertIsNone(flex_cards.build_result_card({"status": "fallback", "is_scam": False},
                                                        source="text", quote="x", case_id=None))
 
+    # test_reason_lines_become_bullets: ทดสอบเหตุผลหลายบรรทัดถูกแสดงเป็นรายการแต่ละข้อ
     def test_reason_lines_become_bullets(self):
         card = self.card(reason="แอบอ้างเป็นธนาคาร\n• ขู่ว่าบัญชีจะถูกระงับ\n- เร่งให้ส่ง OTP")
         texts = all_texts(card["contents"])
@@ -114,6 +121,7 @@ class ResultCardTests(unittest.TestCase):
             self.assertIn(item, texts)
         self.assertEqual(texts.count("●"), 3)
 
+    # test_long_thai_text_is_cut_safely_and_warning_kept: ทดสอบตัดข้อความไทยยาวให้อยู่ในขอบเขตโดยยังเก็บคำแนะนำและข้อจำกัดของผลตรวจ
     def test_long_thai_text_is_cut_safely_and_warning_kept(self):
         long_quote = "บัญชีของคุณจะถูกระงับ กรุณาส่งรหัส OTP ภายในห้านาทีเพื่อยืนยันตัวตน " * 10
         long_reason = "แอบอ้างเป็นเจ้าหน้าที่ธนาคารและเร่งให้ผู้รับเปิดเผยข้อมูลสำคัญ" * 20
@@ -132,6 +140,7 @@ class ResultCardTests(unittest.TestCase):
                 self.assertLessEqual(len(card["altText"]), 400)
                 self.assertLess(len(json.dumps(card).encode()), 30000)
 
+    # test_shorten_never_orphans_thai_marks_or_leading_vowels: ทดสอบจุดตัดไม่ทำให้วรรณยุกต์หรือสระไทยแยกจากอักษรที่เกี่ยวข้อง
     def test_shorten_never_orphans_thai_marks_or_leading_vowels(self):
         text = "เที่ยวไม่จ่ายเงินแน่นอนไม่ใช่"  # ไม่มีช่องว่าง บังคับตัดกลางคำ
         for limit in range(1, len(text)):
@@ -141,6 +150,7 @@ class ResultCardTests(unittest.TestCase):
                 self.assertFalse(rest and unicodedata.category(rest[0]) == "Mn")
                 self.assertFalse(cut and cut[-1] in flex_cards.THAI_LEADING_VOWELS)
 
+    # test_without_mini_settings_card_still_builds_without_image_or_uri: ทดสอบยังสร้างการ์ดได้เมื่อไม่ได้ตั้งค่า Mini App โดยไม่ใส่รูปหรือลิงก์ที่ใช้ไม่ได้
     def test_without_mini_settings_card_still_builds_without_image_or_uri(self):
         with patch.dict(os.environ, {"MINI_LIFF_ID": "", "LINE_LOGIN_CHANNEL_ID": "", "MINI_WEB_ORIGIN": ""}):
             card = self.card()
@@ -151,12 +161,14 @@ class ResultCardTests(unittest.TestCase):
         self.assertEqual(button["action"]["type"], "postback")
         self.assertEqual(button["action"]["data"], f"learn:{CASE_ID}")
 
+    # test_unknown_status_returns_none: ทดสอบสถานะที่ไม่รองรับคืน None แทนการสร้างการ์ดผิดชนิด
     def test_unknown_status_returns_none(self):
         for status in ("error", "conversation", None):
             with self.subTest(status=status):
                 self.assertIsNone(flex_cards.build_result_card(
                     {"status": status}, source="text", quote="x", case_id=None))
 
+    # test_alt_text_and_reason_are_within_line_limits: ทดสอบ altText และข้อความเหตุผลในการ์ดไม่เกินความยาวที่กำหนด
     def test_alt_text_and_reason_are_within_line_limits(self):
         with patch.dict(os.environ, LIVE_ENV):
             card = flex_cards.build_result_card({"status": "risk_found", "reason": "ร" * 2000},
@@ -165,6 +177,7 @@ class ResultCardTests(unittest.TestCase):
         self.assertTrue(all(len(text) <= 410 for text in all_texts(card["contents"])))
 
 
+# load_messaging: โหลด messaging ด้วย token จำลองสำหรับทดสอบ payload การส่งการ์ด
 def load_messaging():
     config = ModuleType("config")
     config.LINE_CHANNEL_ACCESS_TOKEN = "offline-token"
@@ -177,15 +190,18 @@ def load_messaging():
 
 
 class CardReplyTests(unittest.TestCase):
+    # setUp: เตรียมโมดูล messaging จำลองและการ์ดสั้นสำหรับทดสอบส่ง LINE
     def setUp(self):
         self.module = load_messaging()
         self.card = {"type": "flex", "altText": "ผล", "contents": {"type": "bubble"}}
 
+    # test_card_is_sent_alone_instead_of_text_and_button: ทดสอบส่ง Flex เพียงรายการเดียวเมื่อมีการ์ด ไม่ส่งข้อความหรือปุ่มซ้ำ
     def test_card_is_sent_alone_instead_of_text_and_button(self):
         with patch.object(self.module.requests, "post", return_value=Mock()) as post:
             self.assertTrue(self.module.reply_to_line("token", "ผลตรวจ", card=self.card, learn_case_id=CASE_ID))
         self.assertEqual(post.call_args.kwargs["json"]["messages"], [self.card])
 
+    # test_rejected_card_falls_back_to_plain_text_once: ทดสอบ LINE ปฏิเสธการ์ดด้วย 400 แล้วส่งข้อความธรรมดาแทนเพียงครั้งเดียว
     def test_rejected_card_falls_back_to_plain_text_once(self):
         rejected = Mock()
         rejected.status_code = 400
@@ -196,6 +212,7 @@ class CardReplyTests(unittest.TestCase):
         self.assertEqual(post.call_count, 2)
         self.assertEqual(post.call_args.kwargs["json"]["messages"], [{"type": "text", "text": "ผลตรวจ"}])
 
+    # test_network_failure_with_card_does_not_retry: ทดสอบส่งการ์ดเจอปัญหาเครือข่ายแล้วไม่ส่งซ้ำโดยอัตโนมัติ
     def test_network_failure_with_card_does_not_retry(self):
         with patch.object(self.module.requests, "post", side_effect=requests.ConnectionError("SECRET")) as post:
             self.assertFalse(self.module.reply_to_line("token", "ผลตรวจ", card=self.card))

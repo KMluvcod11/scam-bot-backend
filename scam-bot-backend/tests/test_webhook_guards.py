@@ -20,17 +20,20 @@ def warning_kwargs(save_mock):
 
 
 class EventGuardTests(unittest.TestCase):
+    # setUp: สร้าง EventGuard ความจุสองรายการกับนาฬิกาจำลองสำหรับทดสอบกันซ้ำและหมดอายุ
     def setUp(self):
         guard_type = type(fixtures.load_app().event_guard)
         self.now = 0.0
         self.guard = guard_type(ttl_seconds=10, max_entries=2, clock=lambda: self.now)
 
+    # test_active_and_completed_ids_are_duplicates: ทดสอบ event ที่กำลังทำหรือทำเสร็จแล้วถูกระบุว่าซ้ำ
     def test_active_and_completed_ids_are_duplicates(self):
         self.assertEqual(self.guard.claim("a"), "new")
         self.assertEqual(self.guard.claim("a"), "duplicate")
         self.guard.finish("a")
         self.assertEqual(self.guard.claim("a"), "duplicate")
 
+    # test_completed_id_expires_but_active_id_does_not: ทดสอบเฉพาะ ID ที่ทำเสร็จหมดอายุได้ ส่วนงานกำลังทำยังกันซ้ำ
     def test_completed_id_expires_but_active_id_does_not(self):
         self.guard.claim("done")
         self.guard.finish("done")
@@ -39,6 +42,7 @@ class EventGuardTests(unittest.TestCase):
         self.assertEqual(self.guard.claim("done"), "new")
         self.assertEqual(self.guard.claim("active"), "duplicate")
 
+    # test_capacity_is_bounded_without_evicting_live_ids: ทดสอบความจุ EventGuard ไม่เกินขีดจำกัดและไม่ทิ้ง ID ที่ยังใช้กันซ้ำ
     def test_capacity_is_bounded_without_evicting_live_ids(self):
         self.guard.claim("a")
         self.guard.finish("a")
@@ -48,12 +52,14 @@ class EventGuardTests(unittest.TestCase):
         self.now = 11
         self.assertEqual(self.guard.claim("c"), "new")
 
+    # test_parallel_claims_have_one_owner: ทดสอบจอง ID เดียวพร้อมกันหลายงานมีเพียงงานเดียวได้รับสิทธิ์ new
     def test_parallel_claims_have_one_owner(self):
         with ThreadPoolExecutor(max_workers=8) as pool:
             results = list(pool.map(self.guard.claim, ["same"] * 30))
         self.assertEqual(results.count("new"), 1)
         self.assertEqual(results.count("duplicate"), 29)
 
+    # test_batch_is_atomic_when_capacity_is_full: ทดสอบจองทั้ง batch หรือไม่จองเลยเมื่อที่ไม่พอ
     def test_batch_is_atomic_when_capacity_is_full(self):
         self.assertIsNone(self.guard.claim_batch(["a", "b", "c"]))
         self.assertEqual(self.guard.claim_batch(["a", "a", "b"]),
@@ -67,6 +73,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    # post_raw: ส่ง body ดิบเข้า webhook ทดสอบ พร้อมสร้างลายเซ็นหรือใช้ค่าที่กรณีทดสอบระบุ
     async def post_raw(self, body, signature="auto"):
         if signature == "auto":
             signature = base64.b64encode(hmac.new(
@@ -77,6 +84,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             headers["X-Line-Signature"] = signature
         return await self.http.post("/webhook", content=body, headers=headers)
 
+    # test_missing_or_empty_signature_returns_400: ทดสอบลายเซ็นหายหรือว่างตอบ 400 ก่อนวิเคราะห์
     async def test_missing_or_empty_signature_returns_400(self):
         for signature in (None, "", "   "):
             with self.subTest(signature=signature):
@@ -84,6 +92,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 400)
         self.module.analyze_message.assert_not_called()
 
+    # test_bad_utf8_and_bad_json_return_400: ทดสอบ body ที่ไม่ใช่ UTF-8 หรือ JSON ถูกต้องตอบ 400
     async def test_bad_utf8_and_bad_json_return_400(self):
         for body in (b"\xff", b"", b"not-json", b'{"events":'):
             with self.subTest(body=body):
@@ -91,6 +100,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 400)
         self.module.analyze_message.assert_not_called()
 
+    # test_invalid_payload_shapes_return_400: ทดสอบโครงสร้าง webhook payload ผิดตอบ 400 ก่อนเริ่มงาน
     async def test_invalid_payload_shapes_return_400(self):
         for value in (None, [], 5, {}, {"events": None}, {"events": {}},
                       {"events": [None]}, {"events": [1]}, {"events": [{}]},
@@ -100,6 +110,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(response.status_code, 400)
         self.module.analyze_message.assert_not_called()
 
+    # test_text_missing_fields_returns_400_before_any_work: ทดสอบ text event ขาดฟิลด์สำคัญถูกปฏิเสธก่อนวิเคราะห์หรือตอบ
     async def test_text_missing_fields_returns_400_before_any_work(self):
         mutations = [
             lambda e: e.pop("webhookEventId"),
@@ -118,6 +129,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
 
+    # test_invalid_signature_does_not_reserve_id: ทดสอบลายเซ็นผิดไม่จอง ID จึงยังรับ event ที่ส่งใหม่พร้อมลายเซ็นถูกได้
     async def test_invalid_signature_does_not_reserve_id(self):
         event = fixtures.text_event()
         response = await self.post_events([event], valid_signature=False)
@@ -126,6 +138,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.module.analyze_message.assert_called_once()
 
+    # test_changed_body_rejects_original_signature: ทดสอบแก้ body แล้วไม่สามารถใช้ลายเซ็นของ body เดิม
     async def test_changed_body_rejects_original_signature(self):
         original = json.dumps({"events": [fixtures.text_event("original")]}).encode()
         signature = base64.b64encode(hmac.new(
@@ -135,6 +148,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.module.analyze_message.assert_not_called()
 
+    # test_repeated_delivery_only_analyzes_and_replies_once: ทดสอบ event ซ้ำทั้งใน batch และคำขอใหม่วิเคราะห์และตอบเพียงครั้งเดียว
     async def test_repeated_delivery_only_analyzes_and_replies_once(self):
         self.module.analyze_message.return_value = {
             "is_scam": True, "risk_level": "high", "reason": "test",
@@ -147,6 +161,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_called_once()
         self.module.save_detection.assert_called_once()
 
+    # test_first_seen_redelivery_and_same_text_new_id_are_processed: ทดสอบ redelivery ที่ยังไม่เคยเห็นและข้อความเดิมแต่ ID ใหม่ยังได้รับการประมวลผล
     async def test_first_seen_redelivery_and_same_text_new_id_are_processed(self):
         first = fixtures.text_event(number=1)
         first["deliveryContext"]["isRedelivery"] = True
@@ -154,9 +169,11 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.module.analyze_message.call_count, 2)
 
+    # test_concurrent_duplicate_does_not_start_second_analysis: ทดสอบส่ง event ซ้ำขณะงานแรกยังรอไม่เริ่มการวิเคราะห์รอบที่สอง
     async def test_concurrent_duplicate_does_not_start_second_analysis(self):
         started, release = threading.Event(), threading.Event()
 
+        # slow_analysis: จำลองงานวิเคราะห์ค้างจนได้รับสัญญาณปล่อย เพื่อทดสอบ event ซ้อนระหว่างงานยังทำอยู่
         def slow_analysis(text):
             started.set()
             if not release.wait(3):
@@ -179,6 +196,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             release.set()
             await asyncio.wait_for(task, 5)
 
+    # test_failed_analysis_and_send_are_not_retried: ทดสอบงานวิเคราะห์หรือส่งคำตอบที่ล้มเหลวไม่ถูกรันซ้ำจาก event เดิม
     async def test_failed_analysis_and_send_are_not_retried(self):
         self.module.analyze_message.side_effect = [
             RuntimeError("test"), {"is_scam": True, "risk_level": "high", "reason": "test"},
@@ -190,12 +208,14 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.module.analyze_message.call_count, 2)
         self.module.reply_to_line.assert_called_once()
 
+    # test_full_cache_returns_503_without_processing_new_event: ทดสอบที่เก็บ event เต็มตอบ 503 โดยไม่เริ่ม event ใหม่
     async def test_full_cache_returns_503_without_processing_new_event(self):
         self.module.event_guard.max_entries = 1
         self.assertEqual((await self.post_events([fixtures.text_event(number=1)])).status_code, 200)
         self.assertEqual((await self.post_events([fixtures.text_event(number=2)])).status_code, 503)
         self.module.analyze_message.assert_called_once()
 
+    # test_full_batch_does_not_reserve_earlier_event: ทดสอบ batch เกินความจุไม่ทิ้งการจองบาง ID ไว้
     async def test_full_batch_does_not_reserve_earlier_event(self):
         self.module.event_guard.max_entries = 1
         response = await self.post_events([fixtures.text_event(number=1), fixtures.text_event(number=2)])
@@ -204,6 +224,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await self.post_events([fixtures.text_event(number=1)])).status_code, 200)
         self.module.analyze_message.assert_called_once()
 
+    # test_normal_nonwarning_log_does_not_claim_safety: ทดสอบ log กรณีไม่เตือนไม่ใช้คำรับรองว่าปลอดภัย
     async def test_normal_nonwarning_log_does_not_claim_safety(self):
         with patch("builtins.print") as output:
             await self.post_events([fixtures.text_event()])
@@ -211,6 +232,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("ไม่เข้าเกณฑ์แจ้งเตือน", log)
         self.assertNotIn("ปลอดภัย", log)
 
+    # test_group_image_is_analyzed_once_and_stays_silent_without_risk: ทดสอบรูปกลุ่มวิเคราะห์ครั้งเดียวและไม่ตอบเมื่อไม่พบความเสี่ยง
     async def test_group_image_is_analyzed_once_and_stays_silent_without_risk(self):
         event = fixtures.text_event()
         event["message"] = {
@@ -238,6 +260,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             "warning_attempted": False, "warning_sent": None,
         })
 
+    # test_group_image_rejects_invalid_identity_before_work: ทดสอบ image event กลุ่มที่ขาดข้อมูลระบุตัวตนถูกปฏิเสธก่อนทำงาน
     async def test_group_image_rejects_invalid_identity_before_work(self):
         for field in ("id","webhookEventId", "replyToken"):
             for value in (None, ""," ", 123):
@@ -260,10 +283,12 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.module.save_detection.assert_not_called()
 
+    # test_image_download_runs_once_in_worker_thread: ทดสอบดาวน์โหลดรูปเพียงครั้งเดียวใน worker แยกจาก event loop
     async def test_image_download_runs_once_in_worker_thread(self):
         request_thread = threading.get_ident()
         download_threads = []
 
+        # download: จำลองดาวน์โหลดรูปและจด thread ที่ทำงาน เพื่อเช็กลำดับงานและการใช้ worker
         def download(message_id):
             download_threads.append(threading.get_ident())
             return b"offline-image", "image/jpeg"
@@ -283,6 +308,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.module.save_detection.assert_called_once()
 
+    # test_failed_image_download_keeps_next_text_working: ทดสอบดาวน์โหลดรูปคืน None แล้วยังประมวลผลข้อความถัดไป
     async def test_failed_image_download_keeps_next_text_working(self):
         self.module.get_image_content.return_value = None
 
@@ -297,6 +323,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.assertEqual(self.module.save_detection.call_count, 2)
 
+    # test_image_download_exception_keeps_next_text_working: ทดสอบดาวน์โหลดรูปเกิด exception แล้วยังทำข้อความถัดไป
     async def test_image_download_exception_keeps_next_text_working(self):
         self.module.get_image_content.side_effect = RuntimeError(
             "SECRET_IMAGE"
@@ -316,24 +343,29 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_IMAGE", str(logs.call_args_list))
 
 
+    # test_image_analysis_runs_once_after_dataset_in_worker_without_content_logs: ทดสอบลำดับดาวน์โหลด OCR ค้นตัวอย่าง วิเคราะห์ ตอบ และบันทึกใน worker โดยไม่ log เนื้อหา
     async def test_image_analysis_runs_once_after_dataset_in_worker_without_content_logs(self):
         request_thread = threading.get_ident()
         stages = []
         image_bytes = b"SECRET_IMAGE_DATA"
         detector = load_detector()
 
+        # download: จำลองดาวน์โหลดรูปและจด thread ที่ทำงาน เพื่อเช็กลำดับงานและการใช้ worker
         def download(message_id):
             stages.append(("download", threading.get_ident()))
             return image_bytes, "image/png"
 
+        # read_image: จำลอง OCR คืนข้อความทดสอบและจด thread กับลำดับขั้นตอน
         def read_image(data, mime_type):
             stages.append(("ocr", threading.get_ident()))
             return {"status": "ok", "text": "SECRET_OCR_TEXT"}
 
+        # match_dataset: จำลองผลค้นตัวอย่าง spam พร้อมคะแนน โดยจดว่าค้น Dataset ใน thread ใด
         def match_dataset(text):
             stages.append(("dataset", threading.get_ident()))
             return 87.5, "spam", "SECRET_DATASET_EXAMPLE"
 
+        # analyze_image: จำลองผลวิเคราะห์รูปที่พบความเสี่ยงและจดลำดับขั้นตอนกับ thread
         def analyze_image(text, similarity_percent, matched_label, *, matched_text, private):
             stages.append(("analysis", threading.get_ident()))
             return {
@@ -341,10 +373,12 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 "risk_level": "high", "reason": "SECRET_IMAGE_REASON",
             }
 
+        # reply_image: จำลองส่งคำตอบรูปสำเร็จและจดลำดับการตอบโดยไม่เรียก LINE
         def reply_image(token, message, card=None):
             stages.append(("reply", threading.get_ident()))
             return True
 
+        # save_image: จำลองบันทึกประวัติรูปสำเร็จและจดลำดับการเขียนโดยไม่แตะฐานข้อมูล
         def save_image(event, result, *, warning_attempted, warning_sent):
             stages.append(("history", threading.get_ident()))
             return True
@@ -394,6 +428,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_IMAGE_REASON", str(logs.call_args_list))
         self.assertNotIn("SECRET_DATASET_EXAMPLE", str(logs.call_args_list))
 
+    # test_failed_download_does_not_call_ocr: ทดสอบดาวน์โหลดรูปไม่สำเร็จไม่เรียก OCR หรือวิเคราะห์ข้อความ
     async def test_failed_download_does_not_call_ocr(self):
         failures = (None, RuntimeError("SECRET_DOWNLOAD"))
         for number, error in enumerate(failures, start=1):
@@ -417,6 +452,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.assertEqual(self.module.save_detection.call_count, len(failures))
 
+    # test_uncertain_or_failed_ocr_is_not_treated_as_a_risk_assessment: ทดสอบ OCR ไม่แน่ใจหรือล้มเหลวไม่ถูกใช้เป็นคำตัดสินความเสี่ยง
     async def test_uncertain_or_failed_ocr_is_not_treated_as_a_risk_assessment(self):
         for number, status in enumerate(("uncertain", "error"), start=1):
             with self.subTest(status=status):
@@ -447,6 +483,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             ["uncertain", "error"],
         )
 
+    # test_ocr_exception_keeps_next_text_working_without_secret_logs: ทดสอบ OCR เกิด exception แล้วยังรับข้อความถัดไปและไม่เผย error ลับ
     async def test_ocr_exception_keeps_next_text_working_without_secret_logs(self):
         self.module.extract_text_from_image.side_effect = RuntimeError(
             "SECRET_OCR_ERROR"
@@ -470,6 +507,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("chars=0", str(logs.call_args_list))
         self.assertNotIn("SECRET_OCR_ERROR", str(logs.call_args_list))
 
+    # test_private_image_runs_analysis_reply_and_history_once: ทดสอบเส้นทางรูปส่วนตัวเรียกวิเคราะห์ ตอบ และบันทึกครั้งเดียว
     async def test_private_image_runs_analysis_reply_and_history_once(self):
         event = fixtures.image_event()
         event["source"] = {"type": "user", "userId": "U-private"}
@@ -491,6 +529,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         })
 
 
+    # test_image_miss_ham_or_high_spam_match_still_gets_context_analysis: ทดสอบ OCR ต้องวิเคราะห์บริบทแม้ไม่พบตัวอย่าง พบ ham หรือ spam คะแนนสูง
     async def test_image_miss_ham_or_high_spam_match_still_gets_context_analysis(self):
         matches = ((0.0, None, ""), (96.0, "ham", "ตัวอย่าง ham"), (99.9, "spam", "ตัวอย่าง spam"))
         detector = load_detector()
@@ -525,6 +564,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.module.reply_to_line.assert_not_called()
         self.assertEqual(self.module.save_detection.call_count, len(matches))
 
+    # test_dataset_exception_keeps_next_text_working_without_secret_logs: ทดสอบค้นตัวอย่างของรูปเกิด exception แล้วยังทำข้อความถัดไปโดยไม่เผยรายละเอียด
     async def test_dataset_exception_keeps_next_text_working_without_secret_logs(self):
         self.module.extract_text_from_image.return_value = {
             "status": "ok", "text": "SECRET_LOOKUP_TEXT"
@@ -558,6 +598,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_DATASET_ERROR", str(logs.call_args_list))
 
 
+    # test_group_image_only_warns_for_risk_and_does_not_log_reason: ทดสอบรูปกลุ่มเตือนเฉพาะผลเสี่ยงและไม่พิมพ์เหตุผลลง log
     async def test_group_image_only_warns_for_risk_and_does_not_log_reason(self):
         statuses = ("risk_found", "no_risk_found", "uncertain", "error")
         for number, status in enumerate(statuses, start=1):
@@ -593,6 +634,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 "warning_sent": True if attempted else None,
             })
 
+    # test_image_analysis_exception_keeps_next_text_without_secret_logs: ทดสอบวิเคราะห์รูปพังแล้วยังทำข้อความถัดไปโดยไม่เผย exception ดิบ
     async def test_image_analysis_exception_keeps_next_text_without_secret_logs(self):
         self.module.analyze_message.side_effect = [
             RuntimeError("SECRET_IMAGE_ANALYSIS_ERROR"), {"is_scam": False},
@@ -617,6 +659,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("SECRET_IMAGE_ANALYSIS_ERROR", str(logs.call_args_list))
 
 
+    # test_group_and_room_without_readable_text_skip_lookup_analysis_and_reply: ทดสอบรูปในกลุ่ม/room ที่อ่านไม่ได้ข้ามค้นตัวอย่าง วิเคราะห์ และตอบ
     async def test_group_and_room_without_readable_text_skip_lookup_analysis_and_reply(self):
         number = 0
         for source in ("group", "room"):
@@ -640,6 +683,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                 "warning_attempted": False, "warning_sent": None,
             })
 
+    # test_room_image_warns_once_only_for_consistent_risk_result: ทดสอบรูปใน room เตือนครั้งเดียวเฉพาะ status และ is_scam ที่สอดคล้องว่าเสี่ยง
     async def test_room_image_warns_once_only_for_consistent_risk_result(self):
         for number, flag in enumerate((True, False, None), start=1):
             with self.subTest(is_scam=flag):
@@ -659,6 +703,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
                     self.module.reply_to_line.assert_not_called()
 
 
+    # test_image_history_failure_keeps_next_event_and_does_not_resend: ทดสอบบันทึกประวัติรูปพังแล้วยังทำ event ถัดไปและไม่ส่งคำตอบซ้ำ
     async def test_image_history_failure_keeps_next_event_and_does_not_resend(self):
         for number, failure in enumerate((False, RuntimeError("SECRET_HISTORY_ERROR")), start=1):
             with self.subTest(failure=failure):

@@ -6,6 +6,7 @@ from test_llm_validation import load_detector
 
 
 class URLRoutingTests(unittest.TestCase):
+    # setUp: เตรียม detector และผลจำลองของ URL เวกเตอร์ และ LLM เพื่อทดสอบลำดับการตรวจ
     def setUp(self):
         self.detector = load_detector()
         self.check = self.detector.check_url
@@ -21,6 +22,7 @@ class URLRoutingTests(unittest.TestCase):
         ))
         self.logs = self.enterContext(patch("builtins.print"))
 
+    # test_greetings_without_urls_keep_existing_bypass: ทดสอบคำทักทายที่ไม่มี URL ยังข้ามบริการตามกฎเดิม
     def test_greetings_without_urls_keep_existing_bypass(self):
         self.assertEqual(self.detector.analyze_message("กินข้าวยัง"), {"is_scam": False})
         self.assertEqual(
@@ -31,6 +33,7 @@ class URLRoutingTests(unittest.TestCase):
         self.vector.assert_not_called()
         self.llm.assert_not_called()
 
+    # test_long_text_without_urls_keeps_existing_analysis: ทดสอบข้อความยาวไม่มี URL ใช้เวกเตอร์และ LLM โดยไม่เรียกตรวจลิงก์
     def test_long_text_without_urls_keeps_existing_analysis(self):
         text = "พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม"
         self.assertEqual(self.detector.analyze_message(text), self.normal_result)
@@ -38,6 +41,7 @@ class URLRoutingTests(unittest.TestCase):
         self.vector.assert_called_once_with(text)
         self.llm.assert_called_once_with(text, 0.0, None, matched_text="")
 
+    # test_matched_short_url_warns_before_group_bypass_or_vector: ทดสอบ URL สั้นที่พบภัยเตือนก่อนกฎข้ามข้อความกลุ่มและก่อนค้นเวกเตอร์
     def test_matched_short_url_warns_before_group_bypass_or_vector(self):
         self.check.return_value = {"status": "matched", "threat_types": ["MALWARE"]}
         for private in (False, True):
@@ -52,6 +56,7 @@ class URLRoutingTests(unittest.TestCase):
         self.vector.assert_not_called()
         self.llm.assert_not_called()
 
+    # test_not_found_short_url_continues_context_analysis_in_both_chats: ทดสอบลิงก์สั้นไม่พบภัยยังวิเคราะห์บริบททั้งกลุ่มและส่วนตัว
     def test_not_found_short_url_continues_context_analysis_in_both_chats(self):
         text = "https://a.test"
         for private in (False, True):
@@ -69,6 +74,7 @@ class URLRoutingTests(unittest.TestCase):
                     options["private"] = True
                 self.llm.assert_called_once_with(text, 0.0, None, **options)
 
+    # test_not_found_does_not_override_text_risk: ทดสอบไม่พบ URL ในรายการภัยไม่ได้ลบความเสี่ยงที่พบจากข้อความ
     def test_not_found_does_not_override_text_risk(self):
         expected = {
             "status": "risk_found", "is_scam": True,
@@ -80,6 +86,7 @@ class URLRoutingTests(unittest.TestCase):
             expected,
         )
 
+    # test_check_error_does_not_become_no_risk_result: ทดสอบ Safe Browsing เสียไม่ถูกแปลงเป็นผลไม่เสี่ยงหรือวิเคราะห์ต่อเหมือนตรวจสำเร็จ
     def test_check_error_does_not_become_no_risk_result(self):
         self.check.return_value = {"status": "error", "threat_types": []}
         for private in (False, True):
@@ -91,6 +98,7 @@ class URLRoutingTests(unittest.TestCase):
         self.vector.assert_not_called()
         self.llm.assert_not_called()
 
+    # test_error_on_first_url_does_not_hide_later_matched_url: ทดสอบลิงก์แรกตรวจพลาดแต่ลิงก์ถัดไปพบภัยยังแจ้งเตือน
     def test_error_on_first_url_does_not_hide_later_matched_url(self):
         self.check.side_effect = [
             {"status": "error", "threat_types": []},
@@ -102,6 +110,7 @@ class URLRoutingTests(unittest.TestCase):
         self.assertEqual(self.check.call_args_list, [call("https://a.test"), call("https://b.test")])
         self.vector.assert_not_called()
 
+    # test_exactly_three_unique_urls_can_continue_text_analysis: ทดสอบสาม URL ไม่ซ้ำตรวจครบแล้ววิเคราะห์ข้อความต่อได้
     def test_exactly_three_unique_urls_can_continue_text_analysis(self):
         text = "https://a.test https://b.test https://c.test https://a.test"
         self.assertEqual(self.detector.analyze_message(text), self.normal_result)
@@ -110,6 +119,7 @@ class URLRoutingTests(unittest.TestCase):
         ])
         self.vector.assert_called_once_with(text)
 
+    # test_more_than_three_urls_is_uncertain_without_checking_fourth: ทดสอบเกินสาม URL คืน uncertain โดยไม่ตรวจลิงก์ที่สี่หรือเรียก LLM
     def test_more_than_three_urls_is_uncertain_without_checking_fourth(self):
         text = "https://a.test https://b.test https://c.test https://d.test"
         for private in (False, True):
@@ -125,6 +135,7 @@ class URLRoutingTests(unittest.TestCase):
         self.vector.assert_not_called()
         self.llm.assert_not_called()
 
+    # test_matched_url_still_warns_when_message_exceeds_limit: ทดสอบพบภัยในลิงก์ที่ตรวจแล้วต้องเตือนแม้ข้อความมีลิงก์เกินจำนวนที่รองรับ
     def test_matched_url_still_warns_when_message_exceeds_limit(self):
         self.check.return_value = {"status": "matched", "threat_types": ["MALWARE"]}
         result = self.detector.analyze_message(
@@ -134,6 +145,7 @@ class URLRoutingTests(unittest.TestCase):
         self.assertIs(result["is_scam"], True)
         self.check.assert_called_once_with("https://a.test")
 
+    # test_url_query_is_not_written_to_timing_logs: ทดสอบ log จับเวลาไม่เผย URL หรือ query ที่มีข้อมูลลับ
     def test_url_query_is_not_written_to_timing_logs(self):
         self.check.return_value = {"status": "error", "threat_types": []}
         self.detector.analyze_message("https://a.test/?token=SECRET_URL_QUERY", private=True)

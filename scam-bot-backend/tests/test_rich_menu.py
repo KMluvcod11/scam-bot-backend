@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import rich_menu_setup as setup
 
 
+# menu_event: สร้าง postback menu:check จำลองตามชนิดแชตที่ต้องการทดสอบ
 def menu_event(number=1, source_type="user"):
     event = private_event(number=number)
     event.pop("message")
@@ -30,6 +31,7 @@ class RichMenuWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    # test_menu_check_replies_without_analysis_history_or_case: ทดสอบปุ่มเริ่มตรวจตอบวิธีส่งข้อความโดยไม่เรียก AI สร้างเคส หรือบันทึกผลตรวจ
     async def test_menu_check_replies_without_analysis_history_or_case(self):
         response = await self.post_events([menu_event()])
         self.assertEqual(response.status_code, 200)
@@ -41,11 +43,13 @@ class RichMenuWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.module.save_detection.assert_not_called()
         self.assertEqual(len(self.module.lesson_store._cases), 0)
 
+    # test_duplicate_click_is_replied_once: ทดสอบกดเมนูด้วย event เดิมซ้ำตอบครั้งเดียว
     async def test_duplicate_click_is_replied_once(self):
         event = menu_event()
         await self.post_events([event, event])
         self.module.reply_to_line.assert_called_once()
 
+    # test_group_room_and_invalid_signature_do_not_reply: ทดสอบปุ่มเริ่มตรวจจากกลุ่ม room หรือลายเซ็นผิดไม่ส่งคำตอบ
     async def test_group_room_and_invalid_signature_do_not_reply(self):
         for kind in ("group", "room"):
             response = await self.post_events([menu_event(source_type=kind)])
@@ -54,6 +58,7 @@ class RichMenuWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.status_code, 400)
         self.module.reply_to_line.assert_not_called()
 
+    # test_send_failure_does_not_stop_next_menu_click: ทดสอบส่งคำแนะนำจากเมนูล้มเหลวยังรับการกดถัดไปและไม่เผย error ลับ
     async def test_send_failure_does_not_stop_next_menu_click(self):
         self.module.reply_to_line.side_effect = [RuntimeError("INTERNAL_SECRET"), True]
         with patch("builtins.print") as output:
@@ -63,12 +68,14 @@ class RichMenuWebhookTests(unittest.IsolatedAsyncioTestCase):
 
 
 class RichMenuSetupTests(unittest.TestCase):
+    # setUp: สร้างโฟลเดอร์ชั่วคราวสำหรับบันทึก deployment และโครงสร้างเมนู LIFF จำลอง
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.state_path = Path(self.directory.name) / "deployment.local.json"
         self.definition = setup.build_rich_menu("1234567890-TestApp")
 
+    # test_image_dimensions_and_tap_areas_match_liff_routes: ทดสอบขนาดรูปและพื้นที่กดสามส่วนตรงกับเส้นทาง LIFF ที่กำหนด
     def test_image_dimensions_and_tap_areas_match_liff_routes(self):
         image = setup.validate_menu_image(setup.IMAGE_PATH)
         self.assertLessEqual(len(image), 1_000_000)
@@ -85,9 +92,11 @@ class RichMenuSetupTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 setup.build_rich_menu(invalid)
 
+    # test_publish_keeps_backup_and_uploads_before_activation: ทดสอบเก็บรหัสเมนูเดิมและอัปโหลดภาพก่อนเปิดใช้เมนูใหม่
     def test_publish_keeps_backup_and_uploads_before_activation(self):
         calls = []
 
+        # request: จำลอง LINE API และตรวจว่ามีบันทึกเมนูเก่าก่อนตั้งเมนูใหม่เป็นค่าเริ่มต้น
         def request(method, path, token, **kwargs):
             calls.append((method, path))
             if path == "/v2/bot/richmenu":
@@ -109,6 +118,7 @@ class RichMenuSetupTests(unittest.TestCase):
             self.assertEqual(setup.publish_menu("offline-token", self.definition, state_path=self.state_path)["status"], "already_active")
             line.assert_not_called()
 
+    # test_failed_upload_never_activates_new_menu: ทดสอบอัปโหลดภาพล้มเหลวไม่เปิดใช้เมนูใหม่และยังมีบันทึกสำหรับกู้คืน
     def test_failed_upload_never_activates_new_menu(self):
         with patch.object(setup, "get_default_menu", return_value="richmenu-old"), \
                 patch.object(setup, "line_call", side_effect=[{}, {"richMenuId": "richmenu-new"}, RuntimeError("upload failed")]) as line:
@@ -117,6 +127,7 @@ class RichMenuSetupTests(unittest.TestCase):
         self.assertEqual(line.call_count, 3)
         self.assertEqual(json.loads(self.state_path.read_text())["phase"], "created")
 
+    # test_restore_refuses_to_overwrite_menu_changed_elsewhere: ทดสอบ restore หยุดเมื่อมีคนอื่นเปลี่ยนเมนูไปแล้ว
     def test_restore_refuses_to_overwrite_menu_changed_elsewhere(self):
         setup.write_state(self.state_path, {"new_menu_id": "richmenu-new", "previous_menu_id": "richmenu-old"})
         with patch.object(setup, "get_default_menu", return_value="richmenu-another"), patch.object(setup, "line_call") as line:
@@ -124,6 +135,7 @@ class RichMenuSetupTests(unittest.TestCase):
                 setup.restore_menu("offline-token", self.state_path)
             line.assert_not_called()
 
+    # test_restore_without_previous_api_default_removes_only_default_link: ทดสอบไม่มีเมนูเริ่มต้นเดิมแล้ว restore ลบเฉพาะการผูกเมนูเริ่มต้น
     def test_restore_without_previous_api_default_removes_only_default_link(self):
         setup.write_state(self.state_path, {"new_menu_id": "richmenu-new", "previous_menu_id": None})
         with patch.object(setup, "get_default_menu", side_effect=["richmenu-new", None]), patch.object(setup, "line_call") as line:
@@ -131,6 +143,7 @@ class RichMenuSetupTests(unittest.TestCase):
             line.assert_called_once_with("DELETE", "/v2/bot/user/all/richmenu", "offline-token")
         self.assertEqual(json.loads(self.state_path.read_text())["phase"], "restored")
 
+    # test_publish_requires_apply_before_config_or_network: ทดสอบ publish ต้องมี --apply ก่อนอ่าน config หรือเรียกเครือข่าย
     def test_publish_requires_apply_before_config_or_network(self):
         with patch.object(sys, "argv", ["rich_menu_setup.py", "publish"]), \
                 patch.object(setup, "load_dotenv") as environment, patch.object(setup, "line_call") as line, \

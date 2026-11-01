@@ -7,6 +7,7 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from pathlib import Path
 
+# main: เขียนประวัติสังเคราะห์ลง Supabase จริงสองครั้งแล้วอ่านยืนยันว่ามีแถวเดียว; ผิดเงื่อนไขหยุดด้วย SystemExit
 def main():
     import sys
     backend = Path(__file__).resolve().parents[1]

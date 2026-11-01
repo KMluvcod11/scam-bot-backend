@@ -116,6 +116,7 @@ def summarize(report):
     return summary
 
 
+# main: อ่านตัวเลือกและชุดประเมิน เรียกบริการจริงเพื่อเทียบผล แล้วเขียนรายงานใน temp; คืน exit code
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evaluation", action="store_true",

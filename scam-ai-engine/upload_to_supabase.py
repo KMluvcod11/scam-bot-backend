@@ -14,6 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # อ่านทุกหน้า ไม่ใช้จำนวนแถวเดิมเป็นตำแหน่งใน CSV
+# select_new_rows: ตรวจ label และอ่านข้อมูลเดิมทุกหน้า; คืนเฉพาะข้อความใหม่ไม่ซ้ำ หรือยก error เมื่อข้อมูลขัดแย้ง
 def select_new_rows(df, db):
     if not {'thai_text', 'label'}.issubset(df.columns):
         raise ValueError('Missing CSV columns')
@@ -49,6 +50,7 @@ def select_new_rows(df, db):
     return df.loc[~df['thai_text'].isin(existing)].drop_duplicates('thai_text')
 
 # รับ client อย่างชัดเจน ไม่พึ่ง client ที่สร้างเมื่อ import
+# get_embedding: ส่งข้อความให้ Gemini สร้างเวกเตอร์ 768 มิติ; คืนเวกเตอร์เมื่อขนาดและตัวเลขถูกต้อง
 def get_embedding(text, client):
     response = client.models.embed_content(
         model="gemini-embedding-001",

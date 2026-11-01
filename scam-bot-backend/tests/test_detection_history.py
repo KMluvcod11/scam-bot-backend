@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 
+# load_history: โหลดโมดูลประวัติด้วย config, Supabase และ messaging จำลอง เพื่อไม่แตะคีย์หรือบริการจริง
 def load_history():
     config = ModuleType("config")
     config.SUPABASE_URL = "https://example.invalid"
@@ -31,6 +32,7 @@ def load_history():
 
 
 class HistoryTests(unittest.TestCase):
+    # setUp: เตรียมตาราง line_sources/detection_logs และ event จำลองสำหรับตรวจข้อมูลที่ถูกบันทึก
     def setUp(self):
         self.history = load_history()
         self.source_table = Mock()
@@ -47,6 +49,7 @@ class HistoryTests(unittest.TestCase):
             webhook_event_id="line-event-1", timestamp=1_700_000_000_000,
         )
 
+    # test_saves_result_once_by_line_event_id: ทดสอบบันทึกข้อความและผลตรวจด้วย upsert ที่กันซ้ำตาม LINE event ID
     def test_saves_result_once_by_line_event_id(self):
         result = {"is_scam": True, "risk_level": "high", "reason": "ขอเงินด่วน"}
         self.assertTrue(self.history.save_detection(
@@ -62,6 +65,7 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(self.log_table.upsert.call_args.kwargs,
                          {"on_conflict": "line_event_id", "ignore_duplicates": True})
 
+    # test_database_failure_is_reported_without_raising: ทดสอบบันทึกประวัติล้มเหลวคืน False พร้อม log ขั้นตอน โดยไม่ส่ง exception ออกไป
     def test_database_failure_is_reported_without_raising(self):
         self.db.table.side_effect = RuntimeError("secret server message")
         with patch.object(self.history, "log") as log:
@@ -69,6 +73,7 @@ class HistoryTests(unittest.TestCase):
         self.assertNotIn("secret server message", log.call_args.args[0])
         self.assertIn("stage=line_sources", log.call_args.args[0])
 
+    # test_failure_identifies_table_and_safe_postgrest_code: ทดสอบ log ระบุตารางและรหัส PostgREST ที่อนุญาต แต่ไม่เผยรายละเอียดลับ
     def test_failure_identifies_table_and_safe_postgrest_code(self):
         for table in ("line_sources", "detection_logs"):
             with self.subTest(table=table):
@@ -85,6 +90,7 @@ class HistoryTests(unittest.TestCase):
                 self.assertNotIn("SECRET", recorded)
                 target.upsert.return_value.execute.side_effect = None
 
+    # test_saves_sender_id_and_display_name: ทดสอบข้อมูลประวัติมีรหัสและชื่อผู้ส่งที่ได้จากตัวจำลอง LINE
     def test_saves_sender_id_and_display_name(self):
         self.event.source.user_id = "U123456"
         self.assertTrue(self.history.save_detection(self.event, {"is_scam": False}))
@@ -93,6 +99,7 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(row["sender_display_name"], "ผู้ทดสอบ")
 
 
+    # test_save_detection_uses_case_id_as_row_id: ทดสอบแปลง case_id เป็น UUID ของแถวประวัติพร้อมรักษาการกัน event ซ้ำ
     def test_save_detection_uses_case_id_as_row_id(self):
         case_hex = "0f8f2b7c1d2e4f309a1b2c3d4e5f6a7b"
         self.assertTrue(self.history.save_detection(self.event, {"is_scam": False}, case_id=case_hex))
@@ -101,10 +108,12 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(self.log_table.upsert.call_args.kwargs,
                          {"on_conflict": "line_event_id", "ignore_duplicates": True})
 
+    # test_without_case_id_row_has_no_id_so_database_generates_it: ทดสอบไม่ส่ง id ในแถวเมื่อไม่ได้ระบุ case_id เพื่อให้ฐานข้อมูลสร้างเอง
     def test_without_case_id_row_has_no_id_so_database_generates_it(self):
         self.history.save_detection(self.event, {"is_scam": False})
         self.assertNotIn("id", self.log_table.upsert.call_args.args[0])
 
+    # test_save_detection_image_prefix_and_fallback: ทดสอบข้อความ OCR ที่บันทึกมีคำนำหน้ารูปภาพ และไม่มี OCR ก็เก็บเครื่องหมายรูปภาพ
     def test_save_detection_image_prefix_and_fallback(self):
         self.event.message = SimpleNamespace(type="image", id="img")
         self.history.save_detection(self.event, {"status": "risk_found", "is_scam": True},
@@ -115,6 +124,7 @@ class HistoryTests(unittest.TestCase):
         self.history.save_detection(self.event, {"status": "risk_found", "is_scam": True}, image_text="   ")
         self.assertEqual(self.log_table.upsert.call_args.args[0]["message_text"], "[รูปภาพ]")
 
+    # test_image_without_text_saves_marker_and_assessment_without_raw_content: ทดสอบประวัติรูปที่ไม่มีข้อความเก็บเพียงเครื่องหมายและผลตรวจ ไม่เก็บเนื้อหารูปดิบ
     def test_image_without_text_saves_marker_and_assessment_without_raw_content(self):
         self.event.message = SimpleNamespace(type="image", id="SECRET_IMAGE_ID")
         result = {
@@ -141,6 +151,7 @@ class HistoryTests(unittest.TestCase):
             "on_conflict": "line_event_id", "ignore_duplicates": True,
         })
 
+    # test_image_status_and_reply_outcomes_preserve_history_constraints: ทดสอบบันทึกสถานะรูปและผลส่งคำตอบตรงกับเงื่อนไขประวัติแต่ละกรณี
     def test_image_status_and_reply_outcomes_preserve_history_constraints(self):
         self.event.message = SimpleNamespace(type="image", id="offline-image")
         cases = (

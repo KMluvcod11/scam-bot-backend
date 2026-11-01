@@ -125,6 +125,7 @@ def get_sender_display_name(kind: str, source_id: str, user_id: str) -> str | No
 # 2. รับค่า: reply_token ของ event และ message_text ที่ต้องการตอบ
 # คืนค่า bool: True = LINE API ยอมรับ; False = HTTP/เครือข่ายผิดพลาด
 # card: Flex Message จาก flex_cards.build_result_card(); มีการ์ดจะส่งการ์ดอย่างเดียว
+# reply_to_line: ส่งการ์ดหรือข้อความด้วย reply token; การ์ดถูกปฏิเสธ 400 จึงลองข้อความแทน คืน bool ว่า LINE ยอมรับหรือไม่
 def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | None = None,
                   card: dict | None = None) -> bool:
     # 2.1 ประกาศปลายทาง header ยืนยันตัวตน และ JSON payload

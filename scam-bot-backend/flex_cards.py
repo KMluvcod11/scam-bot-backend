@@ -81,6 +81,7 @@ def asset_url(path: str) -> str | None:
     return f"{origins[0]}/{path}"
 
 
+# mascot_url: คืน URL รูปมาสคอตตามชื่อท่าทาง หรือ None เมื่อยังไม่มีต้นทาง HTTPS ที่ใช้ได้
 def mascot_url(pose: str) -> str | None:
     return asset_url(f"mascot/{pose}.png")
 
@@ -109,10 +110,12 @@ def detail_action(case_id: str | None, allow_postback: bool) -> dict | None:
     return None
 
 
+# section_title: แปลงข้อความหัวข้อเป็นองค์ประกอบ Flex แบบตัวหนา โดยใช้สีและขนาดร่วมของการ์ด
 def section_title(text: str) -> dict:
     return {"type": "text", "text": text, "weight": "bold", "size": "md", "color": TEXT_STRONG}
 
 
+# bullet: จัดข้อความหนึ่งข้อเป็นแถว Flex พร้อมจุดนำหน้าและเปิดการตัดบรรทัด
 def bullet(text: str) -> dict:
     return {"type": "box", "layout": "horizontal", "spacing": "sm", "contents": [
         {"type": "text", "text": "●", "size": "xs", "color": BULLET_COLOR, "flex": 0, "gravity": "top"},

@@ -31,6 +31,7 @@ def extract_urls(text: str) -> list[str]:
 
     return urls
 
+# validate_url: ตรวจ URL แบบ HTTP/HTTPS ที่ไม่มี credentials หรืออักขระผิดกฎ แล้วคืน URL ที่ตัด fragment; ผิดยก ValueError
 def validate_url(url: str) -> str:
     if not isinstance(url,str):
         raise ValueError("URL must be a string")

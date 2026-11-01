@@ -7,6 +7,7 @@ from unittest.mock import Mock, call, patch
 
 
 class ComparisonTests(unittest.TestCase):
+    # load_comparison: โหลดสคริปต์เปรียบเทียบเป็นโมดูลทดสอบโดยไม่รัน main หรือเรียกบริการจริง
     def load_comparison(self):
         path = Path(__file__).resolve().parents[1] / "scripts" / "compare_detection_inputs.py"
         spec = importlib.util.spec_from_file_location("comparison_evaluation_test", path)
@@ -14,12 +15,14 @@ class ComparisonTests(unittest.TestCase):
         spec.loader.exec_module(module)
         return module
 
+    # test_evaluation_budget_and_paired_context: ทดสอบ 12 เคสเรียกค้น 12 ครั้งและวิเคราะห์ 24 ครั้ง โดยแต่ละคู่ต่างกันเฉพาะข้อความตัวอย่าง
     def test_evaluation_budget_and_paired_context(self):
         module = self.load_comparison()
         cases = json.loads(Path(module.__file__).with_name("rag_evaluation_cases.json").read_text(encoding="utf-8"))
         self.assertEqual(len(cases), 12)
         expected_by_text = {case["text"]: case["expected"] for case in cases.values()}
         self.assertEqual(len(expected_by_text), 12)
+        # analyze: คืนผลจำลองตาม expected ของข้อความในชุดประเมิน เพื่อเช็กการจับคู่และสรุปผล
         def analyze(text, score, label, **kwargs):
             status = expected_by_text[text]
             return {"status": status, "is_scam": status == "risk_found"}
@@ -40,6 +43,7 @@ class ComparisonTests(unittest.TestCase):
             self.assertEqual(counts["missed_risks"], 0)
             self.assertEqual(counts["uncertain"], 3)
 
+    # test_summary_separates_abstentions_failures_and_wrong_decisions: ทดสอบสรุป false alarm, missed risk, uncertain, error, fallback และผลขัดแย้งแยกกัน
     def test_summary_separates_abstentions_failures_and_wrong_decisions(self):
         module = self.load_comparison()
         outcomes = [
@@ -64,6 +68,7 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(counts["matrix"]["no_risk_found"]["no_risk_found"], 1)
         self.assertEqual(counts["no_example"], 7)
 
+    # test_service_exceptions_preserve_other_cases_and_hide_error_text: ทดสอบว่าบริการเสียบางเคสยังประเมินเคสอื่นต่อ และรายงานไม่เก็บข้อความ error ลับ
     def test_service_exceptions_preserve_other_cases_and_hide_error_text(self):
         module = self.load_comparison()
         cases = {"first": {"text": "first", "expected": "risk_found"},
@@ -78,6 +83,7 @@ class ComparisonTests(unittest.TestCase):
                          ["error", "error", "error", "no_risk_found"])
         self.assertNotIn("secret-value", json.dumps(report))
 
+    # test_paired_calls_keep_inputs_context_and_errors: ทดสอบโหมดเดิมว่าคู่ข้อความ/OCR ใช้คะแนนและ label เดียวกัน พร้อมคงสถานะ error
     def test_paired_calls_keep_inputs_context_and_errors(self):
         path = Path(__file__).resolve().parents[1] / "scripts" / "compare_detection_inputs.py"
         spec = importlib.util.spec_from_file_location("comparison_under_test", path)
@@ -116,6 +122,7 @@ class ComparisonTests(unittest.TestCase):
         self.assertEqual(len(module.INPUTS["text"]), 110)
         self.assertEqual(len(module.INPUTS["ocr"]), 197)
 
+    # test_no_match_keeps_both_modes_without_example: ทดสอบว่าค้นไม่พบตัวอย่างก็ยังรันทั้งสองโหมดด้วย matched_text ว่าง
     def test_no_match_keeps_both_modes_without_example(self):
         path = Path(__file__).resolve().parents[1] / "scripts" / "compare_detection_inputs.py"
         spec = importlib.util.spec_from_file_location("comparison_under_test", path)

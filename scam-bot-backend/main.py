@@ -140,11 +140,13 @@ def parse_webhook(body: bytes, signature: str | None):
 
 
 # 3. เส้นทางตรวจสถานะ: GET / ยืนยันว่าแอปทำงาน (ไม่ได้ทดสอบ API ภายนอก)
+# root: คืนสถานะว่า FastAPI ทำงานอยู่; ไม่ได้ตรวจความพร้อมของ LINE, Gemini หรือฐานข้อมูล
 @app.get("/")
 async def root():
     return {"status": "ok", "message": "Scam Detection LINE Bot is running!"}
 
 # 4. รับค่า: LINE ส่ง JSON body และลายเซ็นใน HTTP header
+# line_webhook: ตรวจลายเซ็นและ payload จอง event ใหม่ แล้วตอบ HTTP 200 ก่อนประมวลผลเบื้องหลัง; ที่เก็บเต็มตอบ 503
 @app.post("/webhook")
 async def line_webhook(request: Request, x_line_signature: str = Header(None)):
     request_id = uuid4().hex[:8]

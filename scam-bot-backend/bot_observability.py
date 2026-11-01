@@ -15,6 +15,7 @@ ERROR_STATUSES = frozenset({
 })
 
 
+# error_summary: คืนเฉพาะชนิด error และรหัสที่อนุญาตสำหรับ log โดยไม่รวมข้อความหรือรายละเอียดลับ
 def error_summary(error):
     """Return safe diagnostic fields without formatting the exception itself."""
     fields = [f"type={type(error).__name__}"]

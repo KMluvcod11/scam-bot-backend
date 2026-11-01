@@ -97,6 +97,7 @@ def extract_text_from_image(image_bytes, mime_type: str) -> dict:
 
 class DetectionUnavailable(Exception):
     """ระบุขั้นตอนที่ตรวจไม่ได้ โดยไม่เก็บข้อความ error ดิบจากบริการภายนอก."""
+    # __init__: เก็บชื่อขั้นตอนและชนิดข้อผิดพลาดสำหรับแจ้งว่าตรวจไม่ได้ โดยไม่เก็บ error ดิบ
     def __init__(self, stage: str, error_type: str):
         self.stage = stage
         self.error_type = error_type
@@ -105,6 +106,7 @@ class DetectionUnavailable(Exception):
 
 # 3. รับข้อความจาก main.py → กรอง → วิเคราะห์ → คืนผลว่าจะเตือนหรือไม่
 # is_scam=False หมายถึงไม่แจ้งเตือนตามกฎ ไม่ใช่รับประกันว่าปลอดภัย
+# analyze_message: ตรวจลิงก์และเลือกเส้นทางกฎ/เวกเตอร์/LLM ตามชนิดแชต; คืนผลตรวจหรือสถานะตรวจไม่ได้
 def analyze_message(text: str, *, private: bool = False) -> dict:
     clean_text = text.strip().lower()
     has_trigger = any(keyword in clean_text for keyword in SCAM_TRIGGERS)

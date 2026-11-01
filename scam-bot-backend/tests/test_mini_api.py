@@ -11,9 +11,11 @@ import test_webhook_threadpool as fixtures
 class FakeHistory:
     """แทน mini_history: เก็บเคสในหน่วยความจำ และบันทึกว่าถูกถามด้วยเจ้าของคนไหน."""
 
+    # __init__: เตรียมที่เก็บเคสและรายการคำขอใน RAM พร้อมสวิตช์จำลองระบบประวัติขัดข้อง
     def __init__(self, unavailable):
         self.cases, self.calls, self.unavailable, self.broken = {}, [], unavailable, False
 
+    # add: ใส่เคสจำลองพร้อม owner และรายละเอียดลงที่เก็บ RAM สำหรับทดสอบสิทธิ์
     def add(self, case_id, owner, message="ส่ง OTP มา"):
         self.cases[case_id] = (owner, {
             "id": case_id, "title": message, "category": "message", "message": message,
@@ -21,22 +23,26 @@ class FakeHistory:
             "reason": "เหตุผลทดสอบ", "lessonId": "otp", "nextSteps": ["หยุดก่อน"],
             "warningPoints": [{"icon": "user", "title": "พบคำว่า OTP", "description": "x"}]})
 
+    # _check: จดชื่อการกระทำกับ owner และยก error เมื่อเปิดสวิตช์จำลองประวัติล่ม
     def _check(self, name, owner):
         self.calls.append((name, owner))
         if self.broken:
             raise self.unavailable()
 
+    # list_cases: คืนรายการย่อของเคสจำลองเฉพาะเจ้าของ ไม่เกิน limit
     def list_cases(self, owner, limit=50):
         self._check("list", owner)
         keys = ("id", "title", "category", "receivedAt", "status")
         return [{key: detail[key] for key in keys}
                 for case_owner, detail in self.cases.values() if case_owner == owner][:limit]
 
+    # get_case: คืนสำเนาเคสจำลองเมื่อรหัสและเจ้าของตรงกัน มิฉะนั้นคืน None
     def get_case(self, case_id, owner):
         self._check("get", owner)
         case = self.cases.get(case_id)
         return dict(case[1]) if case and case[0] == owner else None
 
+    # delete_all: ลบเคสจำลองเฉพาะ owner จาก RAM และคืนจำนวนที่ลบ
     def delete_all(self, owner):
         self._check("delete", owner)
         mine = [key for key, (case_owner, _) in self.cases.items() if case_owner == owner]
@@ -46,6 +52,7 @@ class FakeHistory:
 
 
 class MiniApiTests(unittest.IsolatedAsyncioTestCase):
+    # asyncSetUp: ตั้งค่า Mini และคำตอบยืนยัน LINE จำลอง แล้วแทนที่บริการประวัติด้วย FakeHistory
     async def asyncSetUp(self):
         self.environment = patch.dict(os.environ, {
             "MINI_LIFF_ID": "1234567890-TestApp", "LINE_LOGIN_CHANNEL_ID": "1234567890",
@@ -72,17 +79,21 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
 
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
 
+    # auth: คืน Authorization header แบบ Bearer สำหรับ HTTP request ใน test
     def auth(self, token="test-id-token"):
         return {"Authorization": f"Bearer {token}"}
 
+    # create_case: สร้างรหัส hex จากเลขกรณีทดสอบ ใส่เคสให้ owner แล้วคืนรหัสนั้น
     def create_case(self, text="ส่ง OTP มา", number=1, owner="offline-user"):
         case_id = f"{number:032x}"
         self.history.add(case_id, owner, text)
         return case_id
 
+    # read_case: เรียก endpoint รายละเอียดผ่าน client ทดสอบพร้อม Bearer token และคืน HTTP response
     async def read_case(self, case_id, token="test-id-token", **kwargs):
         return await self.http.get(f"/api/mini/cases/{case_id}", headers=self.auth(token), **kwargs)
 
+    # test_reads_exact_original_case_from_history_without_ai: ทดสอบ Mini API อ่านเคสที่ขอจากประวัติ ไม่ใช้เคสล่าสุดหรือเรียก AI
     async def test_reads_exact_original_case_from_history_without_ai(self):
         first = self.create_case("ส่ง OTP มา", 1)
         self.create_case("รับประกันกำไร ไม่มีความเสี่ยง", 2)
@@ -99,6 +110,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             timeout=10, allow_redirects=False)
         self.module.analyze_message.assert_not_called()
 
+    # test_case_other_owner_unknown_and_malformed_all_404_same_body: ทดสอบเคสผิดเจ้าของ ไม่พบ หรือรหัสผิด คืน 404 และเนื้อหาเดียวกัน
     async def test_case_other_owner_unknown_and_malformed_all_404_same_body(self):
         case_id = self.create_case()
         self.identity["sub"] = "another-user"
@@ -112,12 +124,14 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn("OTP", response.text)
             self.assertEqual(response.headers["cache-control"], "no-store")
 
+    # test_query_user_id_cannot_override_verified_owner: ทดสอบ user ID ใน query ไม่สามารถแทนเจ้าของที่ยืนยันจาก token
     async def test_query_user_id_cannot_override_verified_owner(self):
         case_id = self.create_case()
         self.identity["sub"] = "another-user"
         response = await self.read_case(case_id, params={"user_id": "offline-user"})
         self.assertEqual(response.status_code, 404)
 
+    # test_missing_or_malformed_authorization_does_not_call_line: ทดสอบ header ยืนยันตัวตนหายหรือผิดรูปแบบตอบ 401 โดยไม่เรียก LINE
     async def test_missing_or_malformed_authorization_does_not_call_line(self):
         for value in ("", "Basic test", "Bearer ", "Bearer has spaces", "Bearer " + "x" * 8193):
             response = await self.http.get("/api/mini/cases/" + "a" * 32, headers={"Authorization": value})
@@ -125,6 +139,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.headers["cache-control"], "no-store")
         self.verify.assert_not_called()
 
+    # test_line_rejection_expired_wrong_channel_and_invalid_identity_never_release_case: ทดสอบ LINE ปฏิเสธ token หมดอายุ ผิดช่องทาง หรือ identity เสียไม่เปิดเผยเคส
     async def test_line_rejection_expired_wrong_channel_and_invalid_identity_never_release_case(self):
         case_id = self.create_case()
         for changes in ({"aud": "different-channel"}, {"iss": "https://attacker.invalid"},
@@ -138,6 +153,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.verify_response.status_code = code
             self.assertEqual((await self.read_case(case_id)).status_code, 401)
 
+    # test_line_failure_and_bad_json_do_not_leak_errors: ทดสอบ LINE ขัดข้องหรือ JSON เสียตอบ 503 โดยไม่เผย error ดิบ
     async def test_line_failure_and_bad_json_do_not_leak_errors(self):
         case_id = self.create_case()
         for error in (requests.Timeout("SECRET_TOKEN"), requests.ConnectionError("SECRET_TOKEN")):
@@ -156,11 +172,13 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
         self.verify_response.json.return_value = []
         self.assertEqual((await self.read_case(case_id)).status_code, 503)
 
+    # test_missing_server_setting_fails_closed: ทดสอบขาดการตั้งค่า LINE Login แล้วปฏิเสธการอ่านเคสก่อนเรียก LINE
     async def test_missing_server_setting_fails_closed(self):
         with patch.dict(os.environ, {"LINE_LOGIN_CHANNEL_ID": ""}):
             self.assertEqual((await self.read_case("a" * 32)).status_code, 503)
         self.verify.assert_not_called()
 
+    # test_cors_allows_only_configured_origin: ทดสอบ CORS อนุญาตเฉพาะ origin ที่ตั้งค่าไว้
     async def test_cors_allows_only_configured_origin(self):
         for origin, expected in (("https://mini.example", 200), ("https://attacker.invalid", 400)):
             response = await self.http.options("/api/mini/cases/" + "a" * 32, headers={
@@ -170,12 +188,14 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, expected)
             self.assertEqual(response.headers.get("access-control-allow-origin"), origin if expected == 200 else None)
 
+    # test_cors_allows_delete_from_configured_origin: ทดสอบ CORS อนุญาต DELETE จาก origin ที่ถูกต้อง
     async def test_cors_allows_delete_from_configured_origin(self):
         response = await self.http.options("/api/mini/history", headers={
             "Origin": "https://mini.example", "Access-Control-Request-Method": "DELETE",
             "Access-Control-Request-Headers": "authorization"})
         self.assertEqual(response.status_code, 200)
 
+    # test_history_lists_only_verified_owner_cases: ทดสอบรายการประวัติแสดงเฉพาะเคสของเจ้าของที่ยืนยันแล้ว
     async def test_history_lists_only_verified_owner_cases(self):
         self.create_case("ของฉัน", 1)
         self.create_case("ของคนอื่น", 2, owner="another-user")
@@ -188,11 +208,13 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.history.calls, [("list", "offline-user")])
         self.assertEqual(response.headers["cache-control"], "no-store")
 
+    # test_history_empty_returns_empty_list: ทดสอบผู้ใช้ไม่มีเคสได้รับรายการว่างและ HTTP 200
     async def test_history_empty_returns_empty_list(self):
         response = await self.http.get("/api/mini/history", headers=self.auth())
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"cases": []})
 
+    # test_delete_removes_verified_owner_and_is_repeatable: ทดสอบลบเฉพาะเคสเจ้าของและลบซ้ำคืนศูนย์โดยไม่กระทบผู้อื่น
     async def test_delete_removes_verified_owner_and_is_repeatable(self):
         for number in (1, 2, 3):
             self.create_case(number=number)
@@ -204,6 +226,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first.headers["cache-control"], "no-store")
         self.assertEqual(len(self.history.cases), 1)
 
+    # test_all_endpoints_401_without_token_and_never_touch_history: ทดสอบทุก endpoint ของ Mini ปฏิเสธ token ที่หายก่อนแตะที่เก็บประวัติ
     async def test_all_endpoints_401_without_token_and_never_touch_history(self):
         for method, path in (("get", "/api/mini/history"), ("delete", "/api/mini/history"),
                              ("get", "/api/mini/cases/" + "a" * 32)):
@@ -212,6 +235,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.headers["cache-control"], "no-store")
         self.assertEqual(self.history.calls, [])
 
+    # test_history_unavailable_is_503_without_raw_error: ทดสอบประวัติขัดข้องตอบ 503 ข้อความกลางพร้อม header ห้าม cache
     async def test_history_unavailable_is_503_without_raw_error(self):
         self.history.broken = True
         for method, path in (("get", "/api/mini/history"), ("delete", "/api/mini/history"),
@@ -221,6 +245,7 @@ class MiniApiTests(unittest.IsolatedAsyncioTestCase):
             self.assertIn("ระบบประวัติขัดข้อง", response.text)
             self.assertEqual(response.headers["cache-control"], "no-store")
 
+    # test_url_contains_only_random_case_and_validated_liff_id: ทดสอบลิงก์รายละเอียดมีเฉพาะรหัสเคสกับ LIFF ID ที่ผ่านการตรวจ
     async def test_url_contains_only_random_case_and_validated_liff_id(self):
         case_id = "a" * 32
         self.assertEqual(self.api.get_mini_case_url(case_id), f"https://liff.line.me/1234567890-TestApp?case={case_id}")

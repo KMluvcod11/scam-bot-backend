@@ -14,6 +14,7 @@ from messaging import get_group_name, get_group_member_count, get_sender_display
 _client = None
 
 
+# _history_client: สร้างและเก็บ client เขียนประวัติไว้ใช้ซ้ำ โดยกำหนด timeout ของ PostgREST สิบวินาที
 def _history_client():
     global _client
     if _client is None:
@@ -22,6 +23,7 @@ def _history_client():
     return _client
 
 
+# _source: อ่านชนิดแชตจาก event แล้วคืนคู่ชนิดและรหัส user/group/room ที่ตรงกัน
 def _source(event):
     source = event.source
     kind = source.type
@@ -29,6 +31,7 @@ def _source(event):
     return kind, getattr(source, attribute, None)
 
 
+# _status: แปลงผลตรวจเป็นสถานะที่บันทึกได้ โดยแยก error, uncertain และข้อความกลุ่มที่ข้ามการตรวจ
 def _status(result, text, kind):
     if result.get("status") == "error" or result.get("is_scam") is None:
         return "error"
@@ -145,6 +148,7 @@ def redact_phone(text: str | None) -> str  | None:
     )
     return re.sub(pattern, r"\1[ปกปิดเบอร์โทร]", text)
 
+# save_detection: รับ event และผลตรวจ ปกปิดเบอร์ที่มีคำกำกับ แล้วบันทึกครั้งเดียวต่อ event; คืน False เมื่อบันทึกไม่สำเร็จ
 def save_detection(event, result, *, warning_attempted=False, warning_sent=None,
                    case_id=None, image_text=None):
     """Insert once by LINE event ID. Never update an earlier result on redelivery.

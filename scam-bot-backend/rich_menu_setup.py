@@ -17,6 +17,7 @@ IMAGE_PATH = ROOT / "rich_menu" / "menu.png"
 STATE_PATH = ROOT / "rich_menu" / "deployment.local.json"
 
 
+# build_rich_menu: ตรวจ LIFF ID แล้วคืนโครงสร้างเมนูสามปุ่มที่เปิดประวัติ บทเรียน และวิธีใช้
 def build_rich_menu(liff_id):
     if not isinstance(liff_id, str) or not re.fullmatch(r"[0-9]+-[A-Za-z0-9]+", liff_id):
         raise ValueError("MINI_LIFF_ID is missing or invalid")
@@ -38,6 +39,7 @@ def build_rich_menu(liff_id):
     }
 
 
+# validate_menu_image: อ่านและคืน bytes ของ PNG ที่ไม่เกิน 1 MB และขนาด 2500×843; รูปแบบผิดยก ValueError
 def validate_menu_image(image_path):
     image = image_path.read_bytes()
     if len(image) > 1_000_000 or image[:8] != b"\x89PNG\r\n\x1a\n" or len(image) < 24:
@@ -47,6 +49,7 @@ def validate_menu_image(image_path):
     return image
 
 
+# line_call: เรียก LINE API ด้วย timeout โดยไม่ retry; คืน JSON/None ตามเงื่อนไข หรือ error ที่ไม่เผย token
 def line_call(method, path, token, *, payload=None, image=None, allow_missing=False):
     base = "https://api-data.line.me" if image is not None else "https://api.line.me"
     headers = {"Authorization": f"Bearer {token}"}
@@ -68,6 +71,7 @@ def line_call(method, path, token, *, payload=None, image=None, allow_missing=Fa
         raise RuntimeError("LINE API returned invalid JSON") from None
 
 
+# get_default_menu: อ่านรหัส Rich Menu เริ่มต้นจาก LINE; ไม่ได้ตั้งคืน None และรหัสผิดรูปแบบยก error
 def get_default_menu(token):
     result = line_call("GET", "/v2/bot/user/all/richmenu", token, allow_missing=True)
     if result is None:
@@ -78,16 +82,19 @@ def get_default_menu(token):
     return menu_id
 
 
+# valid_menu_id: คืน bool ว่ารหัสเมนูตรงรูปแบบ richmenu- ตามด้วยตัวอักษรหรือตัวเลขหรือไม่
 def valid_menu_id(menu_id):
     return isinstance(menu_id, str) and re.fullmatch(r"richmenu-[A-Za-z0-9]+", menu_id) is not None
 
 
+# write_state: เขียนสถานะการติดตั้งผ่านไฟล์ชั่วคราวแล้วแทนที่ไฟล์เดิม เพื่อเก็บข้อมูลสำหรับย้อนกลับ
 def write_state(state_path, state):
     temporary_path = state_path.with_suffix(".tmp")
     temporary_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     temporary_path.replace(state_path)
 
 
+# publish_menu: ตรวจและสร้างเมนู เก็บรหัสเดิม อัปโหลดภาพ แล้วตั้งเมนูใหม่พร้อมยืนยัน; มีบันทึกค้างจะหยุดให้ตรวจ
 def publish_menu(token, definition, image_path=IMAGE_PATH, state_path=STATE_PATH):
     image = validate_menu_image(image_path)
     fingerprint = hashlib.sha256(image + json.dumps(definition, sort_keys=True).encode()).hexdigest()
@@ -116,6 +123,7 @@ def publish_menu(token, definition, image_path=IMAGE_PATH, state_path=STATE_PATH
     return {"status": "active", "richMenuId": menu_id}
 
 
+# restore_menu: คืนเมนูตามบันทึกการติดตั้งและยืนยันผล; หยุดถ้าพบคนอื่นเปลี่ยนเมนูไปแล้ว
 def restore_menu(token, state_path=STATE_PATH):
     state = json.loads(state_path.read_text(encoding="utf-8"))
     previous = state["previous_menu_id"]
@@ -137,6 +145,7 @@ def restore_menu(token, state_path=STATE_PATH):
     return {"status": "restored", "richMenuId": previous}
 
 
+# main: อ่านคำสั่งจัดการเมนูและคืน exit code; publish/restore ต้องระบุ --apply ก่อนเปลี่ยน LINE
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", nargs="?", default="plan", choices=["plan", "status", "validate", "publish", "restore"])

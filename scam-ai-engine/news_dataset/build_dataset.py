@@ -73,6 +73,7 @@ FAMILIES = [
 ]
 
 
+# main: สร้างตัวอย่างข่าวสังเคราะห์ 36 รายการ ตรวจจำนวนและข้อความซ้ำ แล้วเขียน CSV/JSONL พร้อมแหล่งอ้างอิง
 def main():
     sources = {s["id"]: s for s in SOURCES}
     rows = []

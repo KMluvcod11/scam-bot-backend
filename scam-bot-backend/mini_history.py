@@ -16,6 +16,7 @@ class HistoryUnavailable(Exception):  # noqa: N818 — ชื่อสื่อ�
     """Supabase ขัดข้อง; ไม่เก็บข้อความ error ดิบเพราะอาจมีข้อมูลระบบ."""
 
 
+# get_client: โหลด client ประวัติเมื่อจำเป็น เพื่อไม่ให้ import โมดูลนี้บังคับโหลด config ของบอตทั้งหมด
 def get_client():
     # import ตอนใช้ เพื่อไม่ให้การ import โมดูลนี้ต้องโหลด config/LINE ทั้งชุด
     from detection_history import _history_client
@@ -37,10 +38,12 @@ def _owner_rows(client, owner):
             .in_("detection_status", VISIBLE_STATUSES))
 
 
+# _short_title: รวมช่องว่างของข้อความแล้วตัดไม่เกิน 60 ตัวอักษรสำหรับชื่อเคสในรายการประวัติ
 def _short_title(text):
     return " ".join(str(text).split())[:60]
 
 
+# list_cases: อ่านเคสส่วนตัวของ owner ล่าสุดตาม limit แล้วคืนรายการย่อ; ฐานข้อมูลล้มเหลวยก HistoryUnavailable
 def list_cases(owner: str, limit: int = 50) -> list[dict]:
     rows = _run(lambda client: _owner_rows(client, owner)
                 .order("received_at", desc=True).limit(limit))
@@ -53,6 +56,7 @@ def list_cases(owner: str, limit: int = 50) -> list[dict]:
     } for item in rows]
 
 
+# get_case: อ่านเคสส่วนตัวตามรหัสและ owner แล้วสร้างรายละเอียดจากผลเดิม; ไม่พบหรือรหัสผิดคืน None
 def get_case(case_hex: str, owner: str) -> dict | None:
     # รับเฉพาะ 32 ตัวฐานสิบหก แบบที่อยู่ในลิงก์ รหัสผิดรูปแบบไม่ต้องถามฐานข้อมูล
     if not isinstance(case_hex, str) or not re.fullmatch(r"[0-9a-f]{32}", case_hex):
@@ -67,6 +71,7 @@ def get_case(case_hex: str, owner: str) -> dict | None:
     return {**detail, "id": case_hex}
 
 
+# delete_all: ลบประวัติส่วนตัวทุกสถานะของ owner; คืนจำนวนเฉพาะสถานะที่แสดงใน Mini App ไม่แตะประวัติกลุ่ม
 def delete_all(owner: str) -> int:
     # ลบทุกสถานะของเจ้าของในแชตส่วนตัว (รวมคำทักทาย/error) แต่ไม่แตะข้อความในกลุ่ม
     rows = _run(lambda client: client.table(TABLE).delete()

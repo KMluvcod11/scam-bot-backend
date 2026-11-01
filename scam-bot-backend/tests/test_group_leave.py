@@ -8,6 +8,7 @@ from test_group_join import join_event
 import test_webhook_threadpool as webhook_tests
 
 
+# leave_event: แปลง join จำลองเป็น leave และตัด replyToken ตามรูปแบบ event ออกจากกลุ่ม
 def leave_event():
     event = join_event()
     event.update(type='leave', webhookEventId='leave-1')
@@ -20,6 +21,7 @@ class LeaveWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = webhook_tests.WebhookThreadpoolTests.asyncTearDown
     post_events = webhook_tests.WebhookThreadpoolTests.post_events
 
+    # test_leave_runs_in_worker_and_duplicate_is_skipped: ทดสอบ leave ทำงานใน worker ครั้งเดียวต่อ event โดยไม่เรียกวิเคราะห์หรือตอบข้อความ
     async def test_leave_runs_in_worker_and_duplicate_is_skipped(self):
         workers = []
         loop_thread = threading.get_ident()
@@ -34,6 +36,7 @@ class LeaveWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.assert_not_called()
         self.module.reply_to_line.assert_not_called()
 
+    # test_invalid_leave_rejects_whole_batch_before_write: ทดสอบ leave ผิดรูปแบบทำให้ปฏิเสธทั้งชุดก่อนเขียนข้อมูล
     async def test_invalid_leave_rejects_whole_batch_before_write(self):
         self.assertEqual((await self.post_events([leave_event()], False)).status_code, 400)
         for field, value in [('source', {}), ('source', {'type': 'group', 'groupId': ''}),
@@ -45,10 +48,12 @@ class LeaveWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.module.save_group_leave.assert_not_called()
         self.module.save_group_join.assert_not_called()
 
+    # test_database_failure_returns_200: ทดสอบบันทึก leave ไม่สำเร็จแล้วยังคงตอบรับ webhook 200
     async def test_database_failure_returns_200(self):
         self.module.save_group_leave.return_value = False
         self.assertEqual((await self.post_events([leave_event()])).status_code, 200)
 
+    # test_room_leave_does_not_change_group: ทดสอบ leave ของ room ไม่ไปเปลี่ยนสถานะกลุ่ม
     async def test_room_leave_does_not_change_group(self):
         event = leave_event()
         event['source'] = {'type': 'room', 'roomId': 'room-1'}
@@ -57,6 +62,7 @@ class LeaveWebhookTests(unittest.IsolatedAsyncioTestCase):
 
 
 class LeaveHistoryTests(unittest.TestCase):
+    # setUp: เตรียม query อัปเดตกลุ่มและ leave event จำลองสำหรับตรวจการเปลี่ยน is_active
     def setUp(self):
         self.history = load_history()
         self.db = Mock()
@@ -66,6 +72,7 @@ class LeaveHistoryTests(unittest.TestCase):
         self.query.execute.return_value.data = [{'id': 'same-id'}]
         self.event = SimpleNamespace(source=SimpleNamespace(type='group', group_id='group-1'), timestamp=1700000000000)
 
+    # test_leave_updates_only_status_and_join_reuses_identity: ทดสอบออกกลุ่มแก้เฉพาะ is_active และเข้ากลุ่มซ้ำใช้รหัสเดิมโดยไม่ลบประวัติ
     def test_leave_updates_only_status_and_join_reuses_identity(self):
         with patch('builtins.print'):
             self.assertTrue(self.history.save_group_leave(self.event))
@@ -82,6 +89,7 @@ class LeaveHistoryTests(unittest.TestCase):
         self.db.table.return_value.delete.assert_not_called()
         self.assertTrue(all(call.args == ('line_sources',) for call in self.db.table.call_args_list))
 
+    # test_no_row_and_database_error_are_not_success: ทดสอบไม่พบแถวกลุ่มหรือฐานข้อมูลเสียต้องไม่รายงานว่าบันทึก leave สำเร็จ
     def test_no_row_and_database_error_are_not_success(self):
         self.query.execute.return_value.data = []
         with patch('builtins.print'):
@@ -91,6 +99,7 @@ class LeaveHistoryTests(unittest.TestCase):
             self.assertFalse(self.history.save_group_leave(self.event))
         self.assertNotIn('SECRET', str(logs.call_args_list))
 
+    # test_delayed_message_history_does_not_set_group_active: ทดสอบข้อความที่มาช้าหลัง leave ไม่เปิดสถานะกลุ่มกลับมาเอง
     def test_delayed_message_history_does_not_set_group_active(self):
         self.db.table.return_value.upsert.return_value.execute.return_value.data = [{'id': 'same-id'}]
         self.event.message = SimpleNamespace(text='สวัสดี')
