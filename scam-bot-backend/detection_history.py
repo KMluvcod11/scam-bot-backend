@@ -1,6 +1,7 @@
 """Persist one LINE text event for the dashboard without logging secrets."""
 from datetime import datetime, timezone
 import uuid
+import re
 
 from supabase import create_client
 from supabase.client import ClientOptions
@@ -132,6 +133,17 @@ def save_group_leave(event):
         log(f"[GROUP ERROR] stage=leave type={type(error).__name__}")
         return False
 
+def redact_phone(text: str | None) -> str  | None:
+    """ปกปิดเฉพาะเบอร์มือถือไทยที่มีคำกำกับ เพื่อลดการจับเลขทั่วไปผิด."""
+    if text is None:
+        return None
+
+    pattern = (
+        r"((?:เบอร์โทรศัพท์|เบอร์โทร|เบอร์|โทรศัพท์|โทร)"
+        r"\s*[:：]?\s*)"
+        r"0[689](?:[ -]?[0-9]){8}(?![0-9])"
+    )
+    return re.sub(pattern, r"\1[ปกปิดเบอร์โทร]", text)
 
 def save_detection(event, result, *, warning_attempted=False, warning_sent=None,
                    case_id=None, image_text=None):
@@ -162,6 +174,8 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None,
             text = event.message.text
             
         status = _status(result, text, kind)
+        stored_text = redact_phone(text)
+        stored_reason = redact_phone(result.get("reason"))
         sender_user_id = getattr(event.source, "user_id", None)
         sender_display_name = (get_sender_display_name(kind, line_source_id, sender_user_id)
                                if sender_user_id else None)
@@ -171,13 +185,13 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None,
             "source_type": kind,
             "sender_user_id": sender_user_id,
             "sender_display_name": sender_display_name,
-            "message_text": text,
-            "message_preview": text[:160],
+            "message_text": stored_text,
+            "message_preview": stored_text[:160],
             "received_at": datetime.fromtimestamp(event.timestamp / 1000, timezone.utc).isoformat(),
             "detection_status": status,
             "is_scam": None if status == "error" else result.get("is_scam"),
             "risk_level": result.get("risk_level"),
-            "reason": result.get("reason"),
+            "reason": stored_reason,
             "decision_method": "fallback" if result.get("status") == "fallback" else "unknown",
             "warning_attempted": warning_attempted,
             "warning_sent": warning_sent,
