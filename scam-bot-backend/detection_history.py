@@ -1,7 +1,6 @@
 """Persist one LINE text event for the dashboard without logging secrets."""
 from datetime import datetime, timezone
 import uuid
-import re
 
 from supabase import create_client
 from supabase.client import ClientOptions
@@ -9,6 +8,8 @@ from supabase.client import ClientOptions
 from bot_observability import error_summary, log
 from config import SAFE_WORDS, SUPABASE_HISTORY_KEY, SUPABASE_URL
 from messaging import get_group_name, get_group_member_count, get_sender_display_name
+# ย้ายไป privacy.py ให้การ์ด LINE ใช้ร่วมได้; import ไว้ตรงนี้ให้โค้ด/เทสต์เดิมเรียก detection_history.redact_phone ได้
+from privacy import redact_phone  # noqa: F401
 
 
 _client = None
@@ -135,18 +136,6 @@ def save_group_leave(event):
     except Exception as error:
         log(f"[GROUP ERROR] stage=leave type={type(error).__name__}")
         return False
-
-def redact_phone(text: str | None) -> str  | None:
-    """ปกปิดเฉพาะเบอร์มือถือไทยที่มีคำกำกับ เพื่อลดการจับเลขทั่วไปผิด."""
-    if text is None:
-        return None
-
-    pattern = (
-        r"((?:เบอร์โทรศัพท์|เบอร์โทร|เบอร์|โทรศัพท์|โทร)"
-        r"\s*[:：]?\s*)"
-        r"(?:0|\+66[ -]?)[689](?:[ -]?[0-9]){8}(?![0-9])"
-    )
-    return re.sub(pattern, r"\1[ปกปิดเบอร์โทร]", text)
 
 # save_detection: รับ event และผลตรวจ ปกปิดเบอร์ที่มีคำกำกับ แล้วบันทึกครั้งเดียวต่อ event; คืน False เมื่อบันทึกไม่สำเร็จ
 def save_detection(event, result, *, warning_attempted=False, warning_sent=None,

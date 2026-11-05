@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import requests
+from linebot.v3.messaging import FlexMessage
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -31,7 +32,7 @@ def all_texts(node):
 
 
 STATUSES = {"risk_found": ("พบสัญญาณเสี่ยง", "alert", "คำเตือน"),
-            "uncertain": ("ควรตรวจเพิ่ม", "inspect", "คำแนะนำ"),
+            "uncertain": ("ยังประเมินไม่ได้", "inspect", "คำแนะนำ"),
             "no_risk_found": ("ยังไม่พบสัญญาณเสี่ยง", "calm", "คำแนะนำ")}
 FORBIDDEN = ("ระดับความเสี่ยง", "HIGH", "MEDIUM", "LOW", "สูง", "ปานกลาง", "ต่ำ", "100%")
 
@@ -67,6 +68,9 @@ class ResultCardTests(unittest.TestCase):
                                              case_id=None if group else CASE_ID)
                             texts = all_texts(card["contents"])
                             dumped = json.dumps(card, ensure_ascii=False)
+                            parsed = FlexMessage.from_dict(card)
+                            self.assertEqual(parsed.contents.type, "bubble")
+                            self.assertLessEqual(len(json.dumps(card["contents"], ensure_ascii=False).encode("utf-8")), 30000)
                             # ลำดับ 4 ส่วน: ผลตรวจ → ข้อความที่พบ → เหตุผล → คำเตือน/คำแนะนำ
                             order = [texts.index(kicker), texts.index(title), texts.index("ข้อความที่พบ"),
                                      texts.index("เหตุผล"),
@@ -99,8 +103,8 @@ class ResultCardTests(unittest.TestCase):
         notes = {}
         for status in STATUSES:
             body = self.card(status)["contents"]["body"]["contents"]
-            notes[status] = body[4]["backgroundColor"]
-        self.assertEqual(notes["risk_found"], "#FDECEE")
+            notes[status] = body[5]["backgroundColor"]
+        self.assertEqual(notes["risk_found"], "#FFE3E9")
         self.assertEqual(len(set(notes.values())), 3)
 
     # test_group_fallback_warning_uses_risk_card: ทดสอบกฎสำรองที่เตือนในกลุ่มใช้การ์ดเสี่ยง ส่วน fallback ที่ไม่เตือนไม่สร้างการ์ด
@@ -121,19 +125,20 @@ class ResultCardTests(unittest.TestCase):
             self.assertIn(item, texts)
         self.assertEqual(texts.count("●"), 3)
 
-    # test_long_thai_text_is_cut_safely_and_warning_kept: ทดสอบตัดข้อความไทยยาวให้อยู่ในขอบเขตโดยยังเก็บคำแนะนำและข้อจำกัดของผลตรวจ
-    def test_long_thai_text_is_cut_safely_and_warning_kept(self):
+    # ไม่ตัดคำไทยใน preview; ส่งฉบับเต็มแทนเมื่อเนื้อหาเกินพื้นที่การ์ด
+    def test_long_thai_text_moves_to_continuation_and_warning_kept(self):
         long_quote = "บัญชีของคุณจะถูกระงับ กรุณาส่งรหัส OTP ภายในห้านาทีเพื่อยืนยันตัวตน " * 10
         long_reason = "แอบอ้างเป็นเจ้าหน้าที่ธนาคารและเร่งให้ผู้รับเปิดเผยข้อมูลสำคัญ" * 20
         with patch.dict(os.environ, LIVE_ENV):
             for group in (False, True):
                 card = self.card(quote=long_quote, reason=long_reason, group=group)
                 texts = all_texts(card["contents"])
-                quote = next(t for t in texts if t.startswith("“"))
-                self.assertLessEqual(len(quote), flex_cards.QUOTE_LIMIT + 3)
-                self.assertTrue(quote.endswith("…”"))
-                reason = next(t for t in texts if t.startswith("แอบอ้าง"))
-                self.assertLessEqual(len(reason), flex_cards.REASON_LIMIT + 1)
+                self.assertIn(flex_cards.LONG_QUOTE, texts)
+                self.assertIn(flex_cards.LONG_REASON, texts)
+                continuation = flex_cards.build_result_continuation(
+                    {"status": "risk_found", "reason": long_reason}, source="text", quote=long_quote)
+                self.assertIn(long_quote, continuation)
+                self.assertIn(long_reason, continuation)
                 self.assertIn(flex_cards.STATUS_STYLES["risk_found"]["advice"], texts)
                 self.assertIn(flex_cards.DISCLAIMER, texts)
                 self.assertFalse(any(node.get("maxLines") for node in walk(card)))
@@ -160,6 +165,32 @@ class ResultCardTests(unittest.TestCase):
         button = with_postback["contents"]["footer"]["contents"][0]
         self.assertEqual(button["action"]["type"], "postback")
         self.assertEqual(button["action"]["data"], f"learn:{CASE_ID}")
+
+    # test_phone_is_redacted_in_quote_reason_and_alt_text: การ์ดกลุ่ม/ส่วนตัวต้องไม่แสดงเบอร์ที่ประวัติปกปิดแล้ว
+    def test_phone_is_redacted_in_quote_reason_and_alt_text(self):
+        for group in (False, True):
+            with self.subTest(group=group):
+                card = self.card(quote="ติดต่อกลับ เบอร์ 081-234-5678 ด่วน",
+                                 reason="ให้โทร +66 81 234 5678 เพื่อยืนยัน", group=group)
+                dumped = json.dumps(card, ensure_ascii=False)
+                self.assertNotIn("081-234-5678", dumped)
+                self.assertNotIn("81 234 5678", dumped)
+                self.assertEqual(dumped.count("[ปกปิดเบอร์โทร]"), 2)  # ข้อความ + เหตุผล; altText มีเฉพาะสถานะ
+
+    def test_short_content_needs_no_continuation(self):
+        self.assertEqual(flex_cards.build_result_continuation(
+            {"status": "no_risk_found", "reason": "เป็นการนัดหมาย"}, source="text", quote="นัดพรุ่งนี้"), "")
+
+    def test_all_reason_items_are_preserved_and_result_not_mutated(self):
+        result = {"status": "uncertain", "risk_level": "medium", "reason": "\n".join(
+            f"เหตุผลข้อ {index}" for index in range(8))}
+        before = dict(result)
+        text = flex_cards.build_result_continuation(result, source="image", quote="ข้อความ")
+        self.assertIn("ผลตรวจข้อความจากรูปภาพ", text)
+        for index in range(8):
+            self.assertIn(f"เหตุผลข้อ {index}", text)
+        self.assertEqual(result, before)
+        self.assertNotIn("medium", text)
 
     # test_unknown_status_returns_none: ทดสอบสถานะที่ไม่รองรับคืน None แทนการสร้างการ์ดผิดชนิด
     def test_unknown_status_returns_none(self):
@@ -217,6 +248,86 @@ class CardReplyTests(unittest.TestCase):
         with patch.object(self.module.requests, "post", side_effect=requests.ConnectionError("SECRET")) as post:
             self.assertFalse(self.module.reply_to_line("token", "ผลตรวจ", card=self.card))
         self.assertEqual(post.call_count, 1)
+
+    def test_long_payload_matrix_keeps_content_and_privacy(self):
+        quote = "ข้อความที่พบ กรุณาตรวจสอบก่อนทำตาม เบอร์ 081-234-5678\n" * 160
+        reason = "ตรวจบริบทและผู้ส่งเพิ่มเติม\n" * 22
+        with patch.dict(os.environ, LIVE_ENV):
+            for status in STATUSES:
+                for source in ("text", "image"):
+                    for group in (False, True):
+                        with self.subTest(status=status, source=source, group=group):
+                            result = {"status": status, "reason": reason, "risk_level": "high"}
+                            card = flex_cards.build_result_card(result, source=source, quote=quote,
+                                case_id=None if group else CASE_ID, group=group)
+                            continuation = flex_cards.build_result_continuation(result, source=source, quote=quote)
+                            with patch.object(self.module.requests, "post", return_value=Mock()) as post:
+                                self.assertTrue(self.module.reply_to_line("token", "fallback", card=card,
+                                    continuation=continuation))
+                            messages = post.call_args.kwargs["json"]["messages"]
+                            self.assertEqual(messages[0], card)
+                            self.assertGreater(len(messages), 1)
+                            self.assertLessEqual(len(messages), 5)
+                            self.assertEqual("".join(m["text"] for m in messages[1:]), continuation)
+                            for message in messages[1:]:
+                                self.assertLessEqual(len(message["text"].encode("utf-16-le")) // 2, 5000)
+                            dumped = json.dumps(messages, ensure_ascii=False)
+                            self.assertNotIn("081-234-5678", dumped)
+                            self.assertNotIn("high", dumped)
+                            if group:
+                                self.assertNotIn("liff.line.me", dumped)
+                                self.assertNotIn("postback", dumped)
+
+    def test_long_card_rejection_falls_back_to_complete_redacted_text(self):
+        rejected = Mock(status_code=400)
+        rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
+        text = "ตรวจสอบ 081-234-5678 ก่อนทำตาม\n" * 250
+        with patch.object(self.module.requests, "post", side_effect=[rejected, Mock()]) as post:
+            self.assertTrue(self.module.reply_to_line("token", "ผลตรวจ", card=self.card, continuation=text))
+        messages = post.call_args.kwargs["json"]["messages"]
+        self.assertEqual("".join(m["text"] for m in messages), self.module.redact_phone(text))
+        self.assertEqual(post.call_count, 2)
+
+    def test_utf16_limits_preserve_emoji_and_thai_words(self):
+        text = ("เที่ยวไม่จ่ายเงินแน่นอนไม่ใช่ 👨‍👩‍👧‍👦 👍🏽\n" * 300)
+        messages = self.module.text_messages(text)
+        self.assertIsNotNone(messages)
+        self.assertEqual("".join(m["text"] for m in messages), text)
+        for message in messages:
+            self.assertLessEqual(len(message["text"].encode("utf-16-le")) // 2, 5000)
+        for message in messages[:-1]:
+            self.assertTrue(message["text"][-1].isspace() or
+                            text[text.index(message["text"]) + len(message["text"])].isspace())
+
+    def test_impossible_payload_is_explicit_not_silently_truncated(self):
+        for text in ("ก" * 5001, "คำเตือน " * 4000):
+            with self.subTest(length=len(text)), patch.object(self.module.requests, "post", return_value=Mock()) as post:
+                self.module.reply_to_line("token", text, card=self.card, continuation=text)
+                self.assertEqual(post.call_args.kwargs["json"]["messages"],
+                                 [self.card, {"type": "text", "text": self.module.TOO_LONG_NOTICE}])
+
+    def test_plain_fallback_redacts_phone(self):
+        with patch.object(self.module.requests, "post", return_value=Mock()) as post:
+            self.module.reply_to_line("token", "โทร 081-234-5678")
+        self.assertNotIn("081-234-5678", json.dumps(post.call_args.kwargs["json"]))
+
+    def test_five_text_chunks_replace_card_without_losing_content(self):
+        text = "ข้อความครบ " * 2100
+        with patch.object(self.module.requests, "post", return_value=Mock()) as post:
+            self.assertTrue(self.module.reply_to_line("token", "ผลตรวจ", card=self.card, continuation=text))
+        messages = post.call_args.kwargs["json"]["messages"]
+        self.assertEqual(len(messages), 5)
+        self.assertTrue(all(m["type"] == "text" for m in messages))
+        self.assertEqual("".join(m["text"] for m in messages), text)
+
+    def test_non_400_errors_do_not_resend(self):
+        for status in (401, 429, 500):
+            rejected = Mock(status_code=status)
+            rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
+            with self.subTest(status=status), patch.object(self.module.requests, "post", return_value=rejected) as post:
+                self.assertFalse(self.module.reply_to_line("token", "ผลตรวจ", card=self.card,
+                    continuation="เหตุผลฉบับเต็ม " * 500))
+            self.assertEqual(post.call_count, 1)
 
 
 if __name__ == "__main__":

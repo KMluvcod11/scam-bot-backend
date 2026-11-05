@@ -1,10 +1,37 @@
 """ส่งคำเตือนกลับ LINE และรายงานว่าส่งสำเร็จหรือไม่."""
 # 1. นำเข้า HTTP client และ token จาก config
 import requests
+import re
 from urllib.parse import quote
 from bot_observability import log as print, timed_call
 from config import LINE_CHANNEL_ACCESS_TOKEN
 from mini_api import get_mini_case_url
+from privacy import redact_phone
+
+TEXT_MESSAGE_LIMIT = 5000
+REPLY_MESSAGE_LIMIT = 5
+TOO_LONG_NOTICE = (
+    "รายละเอียดมีความยาวเกินกว่าจะส่งครบในคำตอบเดียว กรุณาแบ่งข้อความแล้วส่งมาตรวจใหม่\n"
+    "ระหว่างนี้อย่าเพิ่งกดลิงก์ โอนเงิน หรือเปิดเผย OTP จนกว่าจะตรวจสอบผ่านช่องทางทางการ\n"
+    "เป็นผลประเมิน ไม่ยืนยันตัวตนหรือข้อเท็จจริงของผู้ส่ง"
+)
+
+
+def text_messages(text: str, *, limit: int = REPLY_MESSAGE_LIMIT) -> list[dict] | None:
+    """แบ่งตรงช่องว่างเท่านั้น นับ UTF-16 ตาม LINE; คืน None ถ้าส่งครบไม่ได้."""
+    chunks, current, used = [], [], 0
+    for part in re.findall(r"\s+|\S+", text):
+        units = len(part.encode("utf-16-le")) // 2
+        if units > TEXT_MESSAGE_LIMIT:
+            return None
+        if used + units > TEXT_MESSAGE_LIMIT:
+            chunks.append({"type": "text", "text": "".join(current)})
+            current, used = [], 0
+        current.append(part)
+        used += units
+    if current:
+        chunks.append({"type": "text", "text": "".join(current)})
+    return chunks if 0 < len(chunks) <= limit else None
 
 # จำกัดขนาดดาวน์โหลดของโปรเจกต์ไว้ที่ 5 MiB
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
@@ -124,20 +151,31 @@ def get_sender_display_name(kind: str, source_id: str, user_id: str) -> str | No
 
 # 2. รับค่า: reply_token ของ event และ message_text ที่ต้องการตอบ
 # คืนค่า bool: True = LINE API ยอมรับ; False = HTTP/เครือข่ายผิดพลาด
-# card: Flex Message จาก flex_cards.build_result_card(); มีการ์ดจะส่งการ์ดอย่างเดียว
+# card: Flex Message เดิม; continuation เป็นฉบับเต็มเมื่อเนื้อหายาว ไม่เพิ่มปุ่มส่วนตัวในข้อความต่อท้าย
 # reply_to_line: ส่งการ์ดหรือข้อความด้วย reply token; การ์ดถูกปฏิเสธ 400 จึงลองข้อความแทน คืน bool ว่า LINE ยอมรับหรือไม่
 def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | None = None,
-                  card: dict | None = None) -> bool:
+                  card: dict | None = None, continuation: str = "") -> bool:
     # 2.1 ประกาศปลายทาง header ยืนยันตัวตน และ JSON payload
     url = "https://api.line.me/v2/bot/message/reply"
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
+    message_text = redact_phone(message_text) or ""
+    continuation = redact_phone(continuation) or ""
+    fallback_text = continuation or message_text
     if card:
+        messages = [card]
+        if continuation:
+            extra = text_messages(continuation, limit=REPLY_MESSAGE_LIMIT - 1)
+            if extra is not None:
+                messages.extend(extra)
+            else:
+                # ถ้าฉบับเต็มใช้ครบ 5 ข้อความ ให้ส่งข้อความแทนการ์ดโดยไม่ทิ้งเนื้อหา
+                messages = text_messages(continuation) or [card, {"type": "text", "text": TOO_LONG_NOTICE}]
         try:
             res = timed_call("line_reply", requests.post, url, headers=headers,
-                             json={"replyToken": reply_token, "messages": [card]}, timeout=10)
+                             json={"replyToken": reply_token, "messages": messages}, timeout=10)
             res.raise_for_status()
             return True
         except requests.HTTPError as e:
@@ -152,9 +190,9 @@ def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | N
             return False
     payload = {
         "replyToken": reply_token,
-        "messages": [{"type": "text", "text": message_text}]
+        "messages": text_messages(fallback_text) or [{"type": "text", "text": TOO_LONG_NOTICE}]
     }
-    if learn_case_id:
+    if learn_case_id and len(payload["messages"]) < REPLY_MESSAGE_LIMIT:
         mini_url = get_mini_case_url(learn_case_id)
         action = {"type": "uri", "label": "เรียนรู้จากเคสนี้", "uri": mini_url} if mini_url else {
             "type": "postback", "label": "เรียนรู้จากเคสนี้",

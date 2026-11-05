@@ -223,7 +223,7 @@ class WebhookThreadpoolTests(unittest.IsolatedAsyncioTestCase):
             return {"is_scam": True, "risk_level": "high", "reason": "เหตุผลทดสอบ"}
 
         # reply: จำลองส่งคำเตือนพร้อมตรวจ thread, token และข้อความ แล้วจดลำดับหลังวิเคราะห์
-        def reply(token, message, card=None):
+        def reply(token, message, card=None, continuation=""):
             self.assertNotEqual(threading.get_ident(), loop_thread)
             self.assertEqual(token, "reply-1")
             self.assertNotIn("HIGH", message)

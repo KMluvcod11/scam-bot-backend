@@ -148,7 +148,8 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.return_value = {**result("risk_found"), "risk_level": "high"}
         await self.post_events([fixtures.text_event()])
         kwargs = self.module.reply_to_line.call_args.kwargs
-        self.assertEqual(set(kwargs), {"card"})
+        self.assertEqual(set(kwargs), {"card", "continuation"})
+        self.assertEqual(kwargs["continuation"], "")
         self.assertNotIn("footer", kwargs["card"]["contents"])
         self.assertNotIn("liff", str(kwargs["card"]))
         reply = self.module.reply_to_line.call_args.args[1]
@@ -205,9 +206,33 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
+    async def test_long_text_and_image_wire_continuation_for_private_and_group(self):
+        text = "ตรวจสอบข้อมูลก่อนส่ง OTP เบอร์ 081-234-5678 " * 30
+        number = 100
+        for source in ("user", "group"):
+            for image in (False, True):
+                number += 1
+                with self.subTest(source=source, image=image):
+                    event = fixtures.image_event(number) if image else fixtures.text_event(text, number)
+                    event["source"] = ({"type": "user", "userId": "offline-user"} if source == "user"
+                                       else {"type": "group", "groupId": "offline-group", "userId": "offline-user"})
+                    self.module.analyze_message.return_value = result("risk_found")
+                    self.module.extract_text_from_image.return_value = {"status": "ok", "text": text}
+                    self.module.reply_to_line.reset_mock()
+                    await self.post_events([event])
+                    self.module.reply_to_line.assert_called_once()
+                    kwargs = self.module.reply_to_line.call_args.kwargs
+                    self.assertIn("ฉบับเต็ม", kwargs["continuation"])
+                    self.assertIn("[ปกปิดเบอร์โทร]", kwargs["continuation"])
+                    self.assertNotIn("081-234-5678", kwargs["continuation"])
+                    self.assertIn("ผลตรวจข้อความจากรูปภาพ" if image else "ผลตรวจข้อความ", kwargs["continuation"])
+                    if source == "group":
+                        self.assertNotIn("learn_case_id", kwargs)
+                        self.assertNotIn("footer", kwargs["card"]["contents"])
+
     # test_text_result_sends_card_and_opens_case_for_every_status: ทดสอบผลข้อความทั้งสามสถานะมีการ์ดและรหัสเคสที่ใช้บันทึกประวัติ
     async def test_text_result_sends_card_and_opens_case_for_every_status(self):
-        titles = {"risk_found": "พบสัญญาณเสี่ยง", "uncertain": "ควรตรวจเพิ่ม", "no_risk_found": "ยังไม่พบสัญญาณเสี่ยง"}
+        titles = {"risk_found": "พบสัญญาณเสี่ยง", "uncertain": "ยังประเมินไม่ได้", "no_risk_found": "ยังไม่พบสัญญาณเสี่ยง"}
         for number, (status, title) in enumerate(titles.items(), 1):
             with self.subTest(status=status):
                 self.module.analyze_message.return_value = result(status)

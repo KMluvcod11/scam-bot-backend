@@ -6,31 +6,34 @@ import re
 import unicodedata
 
 from mini_api import get_mini_case_url, mini_web_origins
+from privacy import redact_phone
 
 
 # สีหัวการ์ดตามสถานะ: แดงอ่อน = พบสัญญาณเสี่ยง, เหลืองอ่อน = ควรตรวจเพิ่ม, เขียวอ่อน = ยังไม่พบ
 STATUS_STYLES = {
-    "risk_found": {"title": "พบสัญญาณเสี่ยง", "pose": "alert", "header": "#FDE2E4",
-                   "note_title": "คำเตือน", "note_icon": "icons/warning.png", "note_color": "#E5484D", "note_background": "#FDECEE",
+    "risk_found": {"title": "พบสัญญาณเสี่ยง", "pose": "alert", "header": "#FFB9C0",
+                   "note_title": "คำเตือน", "note_icon": "icons/warning.png", "note_color": "#B42336", "note_background": "#FFE3E9",
                    "advice": "อย่าเพิ่งกดลิงก์ โอนเงิน หรือเปิดเผย OTP "
                              "ตรวจสอบผ่านช่องทางทางการก่อน"},
-    "uncertain": {"title": "ควรตรวจเพิ่ม", "pose": "inspect", "header": "#FDF0D5",
+    "uncertain": {"title": "ยังประเมินไม่ได้", "pose": "inspect", "header": "#FFF0B3",
                   "note_title": "คำแนะนำ", "note_color": "#9A5B00", "note_background": "#FDF3E1",
                   "advice": "ข้อมูลยังไม่พอที่จะสรุป ตรวจผ่านช่องทางทางการก่อนทำตาม"},
-    "no_risk_found": {"title": "ยังไม่พบสัญญาณเสี่ยง", "pose": "calm", "header": "#E3F5EC",
-                      "note_title": "คำแนะนำ", "note_color": "#0F6E56", "note_background": "#F1F3F5",
+    "no_risk_found": {"title": "ยังไม่พบสัญญาณเสี่ยง", "pose": "calm", "header": "#BDF3D8",
+                      "note_title": "คำแนะนำ", "note_color": "#0F6E56", "note_background": "#DCFFF0",
                       "advice": "ผลนี้ไม่รับรองว่าปลอดภัย และไม่ได้ตรวจเว็บไซต์ปลายทาง"},
 }
-TEXT_STRONG = "#16303A"
-TEXT_BODY = "#2B3440"
-TEXT_MUTED = "#7A8590"
+TEXT_STRONG = "#241A24"
+TEXT_BODY = "#352B35"
+TEXT_MUTED = "#62606A"
 QUOTE_BACKGROUND = "#F1F3F5"
 BULLET_COLOR = "#2BB58A"
-BUTTON_COLOR = "#1E5A5A"
+BUTTON_COLOR = "#ED0961"
 DISCLAIMER = "เป็นผลประเมินจากข้อความ ไม่ยืนยันตัวตนหรือข้อเท็จจริงของผู้ส่ง"
 QUOTE_LIMIT = 150
 REASON_LIMIT = 400
 REASON_ITEMS = 5
+LONG_QUOTE = "ข้อความยาว อ่านฉบับเต็มในข้อความถัดจากการ์ด"
+LONG_REASON = "เหตุผลมีรายละเอียดเพิ่มเติม อ่านฉบับเต็มในข้อความถัดจากการ์ด"
 # สระหน้า: ถ้าตัดหลังตัวนี้ สระจะค้างโดยไม่มีพยัญชนะตาม
 THAI_LEADING_VOWELS = set("เแโใไ")
 
@@ -58,16 +61,27 @@ def reason_items(reason) -> list[str]:
     if not isinstance(reason, str) or not reason.strip():
         return ["ไม่มีเหตุผลเพิ่มเติมจากผลตรวจ"]
     parts = [part.strip(" -–•\t") for part in re.split(r"[\r\n•]+", reason)]
-    parts = [part for part in parts if part][:REASON_ITEMS] or [reason.strip()]
-    items, used = [], 0
-    for part in parts:
-        room = REASON_LIMIT - used
-        if room < 20:
-            break
-        item = shorten(part, room)
-        items.append(item)
-        used += len(item)
-    return items
+    parts = [part for part in parts if part] or [reason.strip()]
+    if len(parts) > REASON_ITEMS or sum(map(len, parts)) > REASON_LIMIT:
+        return [LONG_REASON]
+    return parts
+
+
+def build_result_continuation(result: dict, *, source: str, quote: str) -> str:
+    """คืนผลฉบับเต็มที่ปกปิดเบอร์แล้ว เมื่อเนื้อหาไม่พอดีการ์ด; ไม่เรียก AI."""
+    style = card_style(result)
+    if style is None:
+        return ""
+    quote = redact_phone(str(quote)) or ""
+    reason = result.get("reason")
+    reason = redact_phone(reason) if isinstance(reason, str) else ""
+    reason = reason or "ไม่มีเหตุผลเพิ่มเติมจากผลตรวจ"
+    if len(quote) <= QUOTE_LIMIT and reason_items(reason) != [LONG_REASON]:
+        return ""
+    title = "ผลตรวจข้อความจากรูปภาพ" if source == "image" else "ผลตรวจข้อความ"
+    return (f"{title} — ฉบับเต็ม\n{style['title']}\n\nข้อความที่พบ\n{quote}"
+            f"\n\nเหตุผล\n{reason}\n\n{style['note_title']}\n{style['advice']}"
+            f"\n\n{DISCLAIMER}")
 
 
 def asset_url(path: str) -> str | None:
@@ -142,27 +156,28 @@ def build_result_card(result: dict, *, source: str, quote: str, case_id: str | N
     if style is None:
         return None
 
-    reasons = reason_items(result.get("reason"))
+    # ปกปิดเบอร์แบบเดียวกับที่บันทึกประวัติ ก่อนตัดความยาว (ไม่ให้ตัดกลางเบอร์แล้วหลุดการปกปิด)
+    quote = redact_phone(str(quote)) or ""
+    reason = result.get("reason")
+    reasons = reason_items(redact_phone(reason) if isinstance(reason, str) else reason)
     kicker = "ผลตรวจข้อความจากรูปภาพ" if source == "image" else "ผลตรวจข้อความ"
 
-    header_contents = [{
-        "type": "box", "layout": "vertical", "flex": 1, "justifyContent": "center", "spacing": "xs",
-        "contents": [
-            {"type": "text", "text": kicker, "size": "sm", "color": TEXT_STRONG, "wrap": True},
-            {"type": "text", "text": style["title"], "weight": "bold", "size": "lg",
-             "color": TEXT_STRONG, "wrap": True},
-        ],
-    }]
+    status_contents = []
     image = mascot_url(style["pose"])
     if image:
-        header_contents.append({"type": "image", "url": image, "size": "64px",
+        status_contents.append({"type": "image", "url": image, "size": "72px",
                                 "aspectRatio": "1:1", "aspectMode": "fit", "flex": 0})
+    status_contents.append({"type": "text", "text": style["title"], "weight": "bold",
+                            "size": "lg", "color": style["note_color"], "wrap": True,
+                            "flex": 1, "gravity": "center"})
 
     body = [
+        {"type": "box", "layout": "horizontal", "spacing": "md", "alignItems": "center",
+         "contents": status_contents},
         section_title("ข้อความที่พบ"),
         {"type": "box", "layout": "vertical", "backgroundColor": QUOTE_BACKGROUND,
          "cornerRadius": "12px", "paddingAll": "12px", "contents": [
-             {"type": "text", "text": f"“{shorten(quote, QUOTE_LIMIT)}”", "size": "sm",
+             {"type": "text", "text": f"“{quote}”" if len(quote) <= QUOTE_LIMIT else LONG_QUOTE, "size": "sm",
               "color": TEXT_BODY, "wrap": True}]},
         section_title("เหตุผล"),
         {"type": "box", "layout": "vertical", "spacing": "xs",
@@ -171,23 +186,24 @@ def build_result_card(result: dict, *, source: str, quote: str, case_id: str | N
          "cornerRadius": "12px", "paddingAll": "12px", "contents": [
              note_heading(style),
              {"type": "text", "text": style["advice"], "size": "sm", "color": TEXT_BODY, "wrap": True}]},
-        {"type": "text", "text": DISCLAIMER, "size": "xxs", "color": TEXT_MUTED, "wrap": True},
+        {"type": "text", "text": DISCLAIMER, "size": "xs", "color": TEXT_MUTED, "wrap": True},
     ]
 
     bubble = {
         "type": "bubble",
-        "header": {"type": "box", "layout": "horizontal", "alignItems": "center", "spacing": "md",
+        "header": {"type": "box", "layout": "vertical",
                    "backgroundColor": style["header"], "paddingAll": "16px",
-                   "contents": header_contents},
-        "body": {"type": "box", "layout": "vertical", "spacing": "md", "paddingAll": "16px",
+                   "contents": [{"type": "text", "text": kicker, "weight": "bold", "size": "md",
+                                 "color": TEXT_STRONG, "wrap": True, "align": "center"}]},
+        "body": {"type": "box", "layout": "vertical", "spacing": "lg", "paddingAll": "20px",
                  "backgroundColor": "#FFFFFF", "contents": body},
     }
     action = None if group else detail_action(case_id, allow_postback)
     if action:
         bubble["footer"] = {"type": "box", "layout": "vertical", "paddingAll": "12px",
                             "paddingTop": "0px", "contents": [
-            {"type": "button", "style": "primary", "height": "sm", "color": BUTTON_COLOR, "action": action}]}
+            {"type": "button", "style": "primary", "height": "md", "color": BUTTON_COLOR, "action": action}]}
 
     # altText แสดงในรายการแชต/แจ้งเตือน LINE จำกัด 400 ตัวอักษร
-    alt_text = shorten(f"{style['title']}: {' '.join(reasons)}", 390)
+    alt_text = f"{kicker}: {style['title']}"
     return {"type": "flex", "altText": alt_text, "contents": bubble}
