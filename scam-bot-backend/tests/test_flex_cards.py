@@ -177,6 +177,22 @@ class ResultCardTests(unittest.TestCase):
                 self.assertNotIn("81 234 5678", dumped)
                 self.assertEqual(dumped.count("[ปกปิดเบอร์โทร]"), 2)  # ข้อความ + เหตุผล; altText มีเฉพาะสถานะ
 
+    # ฉบับเต็มเป็นข้อความธรรมดาที่ LINE ทำลิงก์ให้กดได้ บอตต้องไม่ส่งลิงก์มิจฉาชีพที่กดได้ซ้ำในนามตัวเอง
+    def test_continuation_defangs_links_so_line_cannot_make_them_clickable(self):
+        filler = "บัญชีของคุณจะถูกระงับ กรุณายืนยันตัวตนทันที " * 5
+        quote = (filler + "กดที่ https://phish.example.com/login หรือ HTTP://Bad.Example.org "
+                 "หรือ www.fake-bank.co.th และ bit.ly/abc123 ค่าธรรมเนียม 1.5 บาท")
+        reason = "ข้อความให้กดลิงก์ https://phish.example.com/login เพื่อยืนยันตัวตน"
+        continuation = flex_cards.build_result_continuation(
+            {"status": "risk_found", "is_scam": True, "reason": reason}, source="text", quote=quote)
+        lowered = continuation.lower()
+        for clickable in ("http://", "https://", "www.", "example.com", "example.org", "co.th", "bit.ly"):
+            self.assertNotIn(clickable, lowered)
+        self.assertIn("hxxps://phish[.]example[.]com/login", continuation)
+        self.assertIn("www[.]fake-bank[.]co[.]th", continuation)
+        self.assertIn("bit[.]ly/abc123", continuation)
+        self.assertIn("1.5 บาท", continuation)  # ตัวเลขทศนิยมไม่ใช่ลิงก์ ไม่ต้องแก้
+
     def test_short_content_needs_no_continuation(self):
         self.assertEqual(flex_cards.build_result_continuation(
             {"status": "no_risk_found", "reason": "เป็นการนัดหมาย"}, source="text", quote="นัดพรุ่งนี้"), "")

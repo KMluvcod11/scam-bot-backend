@@ -67,14 +67,25 @@ def reason_items(reason) -> list[str]:
     return parts
 
 
+def defang_links(text: str) -> str:
+    """ทำลิงก์ให้อ่านออกแต่กดไม่ได้ เช่น https://a.com → hxxps://a[.]com.
+
+    ฉบับเต็มส่งเป็นข้อความธรรมดา ซึ่ง LINE เปลี่ยนลิงก์ให้กดได้อัตโนมัติ
+    บอตจึงต้องไม่ส่งลิงก์จากข้อความมิจฉาชีพกลับเข้าแชตในสภาพที่กดได้
+    """
+    text = re.sub(r"\b(h)tt(ps?)://", r"\1xx\2://", text, flags=re.IGNORECASE)
+    # จุดที่ตามด้วยตัวอักษรอังกฤษคือจุดในชื่อโดเมน; จุดทศนิยมเช่น 1.5 ไม่ถูกแก้
+    return re.sub(r"(?<=[A-Za-z0-9-])\.(?=[A-Za-z])", "[.]", text)
+
+
 def build_result_continuation(result: dict, *, source: str, quote: str) -> str:
-    """คืนผลฉบับเต็มที่ปกปิดเบอร์แล้ว เมื่อเนื้อหาไม่พอดีการ์ด; ไม่เรียก AI."""
+    """คืนผลฉบับเต็มที่ปกปิดเบอร์และทำลิงก์ให้กดไม่ได้แล้ว เมื่อเนื้อหาไม่พอดีการ์ด; ไม่เรียก AI."""
     style = card_style(result)
     if style is None:
         return ""
-    quote = redact_phone(str(quote)) or ""
+    quote = defang_links(redact_phone(str(quote)) or "")
     reason = result.get("reason")
-    reason = redact_phone(reason) if isinstance(reason, str) else ""
+    reason = defang_links(redact_phone(reason)) if isinstance(reason, str) else ""
     reason = reason or "ไม่มีเหตุผลเพิ่มเติมจากผลตรวจ"
     if len(quote) <= QUOTE_LIMIT and reason_items(reason) != [LONG_REASON]:
         return ""
