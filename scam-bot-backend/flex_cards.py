@@ -3,7 +3,6 @@
 การ์ดไม่แสดงระดับความเสี่ยง (risk_level) ค่านั้นยังอยู่ในผลตรวจและประวัติให้ Dashboard ใช้ตามเดิม
 """
 import re
-import unicodedata
 
 from mini_api import get_mini_case_url, mini_web_origins
 from privacy import redact_phone
@@ -34,26 +33,6 @@ REASON_LIMIT = 400
 REASON_ITEMS = 5
 LONG_QUOTE = "ข้อความยาว อ่านฉบับเต็มในข้อความถัดจากการ์ด"
 LONG_REASON = "เหตุผลมีรายละเอียดเพิ่มเติม อ่านฉบับเต็มในข้อความถัดจากการ์ด"
-# สระหน้า: ถ้าตัดหลังตัวนี้ สระจะค้างโดยไม่มีพยัญชนะตาม
-THAI_LEADING_VOWELS = set("เแโใไ")
-
-
-def shorten(text: str, limit: int) -> str:
-    """รวมช่องว่างให้เป็นบรรทัดเดียว แล้วตัดให้ไม่เกิน limit ตัวอักษร โดยไม่ตัดกลางพยางค์ไทย."""
-    single_line = " ".join(str(text).split())
-    if len(single_line) <= limit:
-        return single_line
-    cut = limit
-    # ตัดตรงช่องว่างถ้าอยู่ใกล้ ๆ (ภาษาไทยเว้นวรรคระหว่างวลี)
-    space = single_line.rfind(" ", 0, cut + 1)
-    if space >= limit * 2 // 3:
-        cut = space
-    else:
-        # ไม่ให้สระบน/ล่าง/วรรณยุกต์หลุดจากพยัญชนะ และไม่ให้สระหน้าค้างท้ายบรรทัด
-        while cut > 0 and (unicodedata.category(single_line[cut]) == "Mn"
-                           or single_line[cut - 1] in THAI_LEADING_VOWELS):
-            cut -= 1
-    return single_line[:cut].rstrip() + "…"
 
 
 def reason_items(reason) -> list[str]:

@@ -22,7 +22,7 @@ linebot/
 ```
 
 `.env` เป็นค่าลับในเครื่อง ส่วน `.env.example` เป็นแบบฟอร์มที่ส่งต่อได้
-`.venv`, `.venv-1`, `scam-ai-engine/venv` และ `node_modules` เป็น environment/dependencies ไม่ใช่โค้ดที่เราเขียน
+`.venv`, `scam-ai-engine/venv` และ `node_modules` เป็น environment/dependencies ไม่ใช่โค้ดที่เราเขียน
 ยังเก็บไว้เพราะไม่ยืนยันว่าเลิกใช้แล้ว เช่นเดียวกับ `.runtime` ของ n8n ที่อาจมี workflow/credentials
 `cloudflared.exe` เป็นเครื่องมือ tunnel ไม่ใช่ไฟล์ขยะ
 
@@ -120,15 +120,14 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`_history_client`](../scam-bot-backend/detection_history.py#L18) | สร้างและเก็บ client เขียนประวัติไว้ใช้ซ้ำ โดยกำหนด timeout ของ PostgREST สิบวินาที |
-| [`_source`](../scam-bot-backend/detection_history.py#L27) | อ่านชนิดแชตจาก event แล้วคืนคู่ชนิดและรหัส user/group/room ที่ตรงกัน |
-| [`_status`](../scam-bot-backend/detection_history.py#L35) | แปลงผลตรวจเป็นสถานะที่บันทึกได้ โดยแยก error, uncertain และข้อความกลุ่มที่ข้ามการตรวจ |
-| [`save_group_join`](../scam-bot-backend/detection_history.py#L49) | เก็บกลุ่มก่อนดึงชื่อ; ไม่สร้าง detection_logs เพราะ join ไม่ใช่ข้อความ. |
-| [`save_group_members`](../scam-bot-backend/detection_history.py#L75) | บันทึกจำนวนล่าสุดจาก LINE โดยไม่บวก/ลบซ้ำจาก webhook ที่ส่งซ้ำ. |
-| [`sync_missing_group_members`](../scam-bot-backend/detection_history.py#L96) | เติมจำนวนสมาชิกของกลุ่มเดิมที่ยังเป็น null; ไม่แก้ประวัติข้อความ. |
-| [`save_group_leave`](../scam-bot-backend/detection_history.py#L122) | ซ่อนกลุ่มที่บอตออก โดยไม่ลบกลุ่ม ชื่อ หรือประวัติการตรวจ. |
-| [`redact_phone`](../scam-bot-backend/detection_history.py#L139) | ปกปิดเฉพาะเบอร์มือถือไทยที่มีคำกำกับ เพื่อลดการจับเลขทั่วไปผิด. |
-| [`save_detection`](../scam-bot-backend/detection_history.py#L152) | รับ event และผลตรวจ ปกปิดเบอร์ที่มีคำกำกับ แล้วบันทึกครั้งเดียวต่อ event; คืน False เมื่อบันทึกไม่สำเร็จ |
+| [`_history_client`](../scam-bot-backend/detection_history.py#L19) | สร้างและเก็บ client เขียนประวัติไว้ใช้ซ้ำ โดยกำหนด timeout ของ PostgREST สิบวินาที |
+| [`_source`](../scam-bot-backend/detection_history.py#L28) | อ่านชนิดแชตจาก event แล้วคืนคู่ชนิดและรหัส user/group/room ที่ตรงกัน |
+| [`_status`](../scam-bot-backend/detection_history.py#L36) | แปลงผลตรวจเป็นสถานะที่บันทึกได้ โดยแยก error, uncertain และข้อความกลุ่มที่ข้ามการตรวจ |
+| [`save_group_join`](../scam-bot-backend/detection_history.py#L50) | เก็บกลุ่มก่อนดึงชื่อ; ไม่สร้าง detection_logs เพราะ join ไม่ใช่ข้อความ. |
+| [`save_group_members`](../scam-bot-backend/detection_history.py#L76) | บันทึกจำนวนล่าสุดจาก LINE โดยไม่บวก/ลบซ้ำจาก webhook ที่ส่งซ้ำ. |
+| [`sync_missing_group_members`](../scam-bot-backend/detection_history.py#L97) | เติมจำนวนสมาชิกของกลุ่มเดิมที่ยังเป็น null; ไม่แก้ประวัติข้อความ. |
+| [`save_group_leave`](../scam-bot-backend/detection_history.py#L123) | ซ่อนกลุ่มที่บอตออก โดยไม่ลบกลุ่ม ชื่อ หรือประวัติการตรวจ. |
+| [`save_detection`](../scam-bot-backend/detection_history.py#L141) | รับ event และผลตรวจ ปกปิดเบอร์ที่มีคำกำกับ แล้วบันทึกครั้งเดียวต่อ event; คืน False เมื่อบันทึกไม่สำเร็จ |
 
 ### scam-bot-backend/detector.py
 
@@ -136,10 +135,10 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 |---|---|
 | [`extract_text_from_image`](../scam-bot-backend/detector.py#L43) | อ่านข้อความในรูป; คืนสถานะ ok, uncertain หรือ error พร้อมข้อความ. |
 | [`DetectionUnavailable.__init__`](../scam-bot-backend/detector.py#L101) | เก็บชื่อขั้นตอนและชนิดข้อผิดพลาดสำหรับแจ้งว่าตรวจไม่ได้ โดยไม่เก็บ error ดิบ |
-| [`analyze_message`](../scam-bot-backend/detector.py#L110) | ตรวจลิงก์และเลือกเส้นทางกฎ/เวกเตอร์/LLM ตามชนิดแชต; คืนผลตรวจหรือสถานะตรวจไม่ได้ |
-| [`find_similarity`](../scam-bot-backend/detector.py#L187) | คืน (คะแนน, label, ข้อความตัวอย่าง); ไม่พบคืน (0.0, None, ""). |
-| [`validate_llm_result`](../scam-bot-backend/detector.py#L246) | รับ JSON ที่แปลงแล้ว; คืน dict เดิมเมื่อถูกต้อง หรือยก ValueError เพื่อลองโมเดลถัดไป. |
-| [`analyze_with_llm`](../scam-bot-backend/detector.py#L269) | ลองโมเดลตามลำดับ; ใช้กฎสำรองเมื่อทุกโมเดลล้มเหลว. |
+| [`analyze_message`](../scam-bot-backend/detector.py#L110) | ตรวจลิงก์และเลือกเส้นทางกฎ/เวกเตอร์/LLM ตามชนิดแชต; Safe Browsing ล่มยังวิเคราะห์ต่อพร้อมธง `url_unchecked`; คืนผลตรวจหรือสถานะตรวจไม่ได้ |
+| [`find_similarity`](../scam-bot-backend/detector.py#L188) | คืน (คะแนน, label, ข้อความตัวอย่าง); ไม่พบคืน (0.0, None, ""). |
+| [`validate_llm_result`](../scam-bot-backend/detector.py#L247) | รับ JSON ที่แปลงแล้ว; คืน dict เดิมเมื่อถูกต้อง หรือยก ValueError เพื่อลองโมเดลถัดไป. |
+| [`analyze_with_llm`](../scam-bot-backend/detector.py#L270) | ลองโมเดลตามลำดับ; `url_unchecked=True` บอก AI ว่าลิงก์ยังไม่ได้ตรวจ ห้ามสรุปว่าปลอดภัย; ใช้กฎสำรองเมื่อทุกโมเดลล้มเหลว. |
 
 ### scam-bot-backend/event_guard.py
 
@@ -154,16 +153,17 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`shorten`](../scam-bot-backend/flex_cards.py#L38) | รวมช่องว่างให้เป็นบรรทัดเดียว แล้วตัดให้ไม่เกิน limit ตัวอักษร โดยไม่ตัดกลางพยางค์ไทย. |
-| [`reason_items`](../scam-bot-backend/flex_cards.py#L56) | แยกเหตุผลเป็นข้อ ๆ ตามขึ้นบรรทัดใหม่หรือ • ที่มากับผลตรวจ ไม่มีก็เป็นข้อเดียว. |
-| [`asset_url`](../scam-bot-backend/flex_cards.py#L73) | รูปอยู่ใน public/ ของเว็บ Mini App; LINE ดึงรูปได้เฉพาะ HTTPS. |
-| [`mascot_url`](../scam-bot-backend/flex_cards.py#L85) | คืน URL รูปมาสคอตตามชื่อท่าทาง หรือ None เมื่อยังไม่มีต้นทาง HTTPS ที่ใช้ได้ |
-| [`note_heading`](../scam-bot-backend/flex_cards.py#L89) | หัวกรอบคำเตือน/คำแนะนำ; มีไอคอนเมื่อโหลดรูปได้ ไม่งั้นเป็นตัวหนังสืออย่างเดียว. |
-| [`detail_action`](../scam-bot-backend/flex_cards.py#L100) | ปุ่มเปิด Mini App ถ้าตั้งค่าครบ; ไม่ครบใช้ postback บทเรียนในแชตแทน (ถ้าอนุญาต). |
-| [`section_title`](../scam-bot-backend/flex_cards.py#L114) | แปลงข้อความหัวข้อเป็นองค์ประกอบ Flex แบบตัวหนา โดยใช้สีและขนาดร่วมของการ์ด |
-| [`bullet`](../scam-bot-backend/flex_cards.py#L119) | จัดข้อความหนึ่งข้อเป็นแถว Flex พร้อมจุดนำหน้าและเปิดการตัดบรรทัด |
-| [`card_style`](../scam-bot-backend/flex_cards.py#L126) | เลือกแบบการ์ดจากสถานะ; ผลที่เตือน (is_scam=True เช่นกฎสำรองในกลุ่ม) ใช้แบบพบสัญญาณเสี่ยงเสมอ. |
-| [`build_result_card`](../scam-bot-backend/flex_cards.py#L134) | รับผลตรวจ คืน Flex Message หนึ่งข้อความ หรือ None ถ้าสถานะนี้ไม่ใช้การ์ด. |
+| [`reason_items`](../scam-bot-backend/flex_cards.py#L38) | แยกเหตุผลเป็นข้อ ๆ ตามขึ้นบรรทัดใหม่หรือ • ที่มากับผลตรวจ ไม่มีก็เป็นข้อเดียว. |
+| [`defang_links`](../scam-bot-backend/flex_cards.py#L49) | ทำลิงก์ให้อ่านออกแต่กดไม่ได้ (`https://a.com` → `hxxps://a[.]com`) เพราะ LINE ทำลิงก์ในข้อความธรรมดาให้กดได้ |
+| [`build_result_continuation`](../scam-bot-backend/flex_cards.py#L60) | คืนผลฉบับเต็มที่ปกปิดเบอร์และทำลิงก์ให้กดไม่ได้ เมื่อข้อความเกิน 150 ตัวหรือเหตุผลยาวเกินการ์ด; สั้นพอคืน "" |
+| [`asset_url`](../scam-bot-backend/flex_cards.py#L77) | รูปอยู่ใน public/ ของเว็บ Mini App; LINE ดึงรูปได้เฉพาะ HTTPS. |
+| [`mascot_url`](../scam-bot-backend/flex_cards.py#L89) | คืน URL รูปมาสคอตตามชื่อท่าทาง หรือ None เมื่อยังไม่มีต้นทาง HTTPS ที่ใช้ได้ |
+| [`note_heading`](../scam-bot-backend/flex_cards.py#L93) | หัวกรอบคำเตือน/คำแนะนำ; มีไอคอนเมื่อโหลดรูปได้ ไม่งั้นเป็นตัวหนังสืออย่างเดียว. |
+| [`detail_action`](../scam-bot-backend/flex_cards.py#L104) | ปุ่มเปิด Mini App ถ้าตั้งค่าครบ; ไม่ครบใช้ postback บทเรียนในแชตแทน (ถ้าอนุญาต). |
+| [`section_title`](../scam-bot-backend/flex_cards.py#L118) | แปลงข้อความหัวข้อเป็นองค์ประกอบ Flex แบบตัวหนา โดยใช้สีและขนาดร่วมของการ์ด |
+| [`bullet`](../scam-bot-backend/flex_cards.py#L123) | จัดข้อความหนึ่งข้อเป็นแถว Flex พร้อมจุดนำหน้าและเปิดการตัดบรรทัด |
+| [`card_style`](../scam-bot-backend/flex_cards.py#L130) | เลือกแบบการ์ดจากสถานะ; ผลที่เตือน (is_scam=True เช่นกฎสำรองในกลุ่ม) ใช้แบบพบสัญญาณเสี่ยงเสมอ. |
+| [`build_result_card`](../scam-bot-backend/flex_cards.py#L138) | รับผลตรวจ คืน Flex Message หนึ่งข้อความ หรือ None ถ้าสถานะนี้ไม่ใช้การ์ด. |
 
 ### scam-bot-backend/learning.py
 
@@ -189,24 +189,25 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 | [`process_accepted_events`](../scam-bot-backend/main.py#L207) | ทำงานหลังส่ง HTTP 200; จบทีละ event และปล่อย ID แม้ขั้นใดเกิดข้อผิดพลาด. |
 | [`process_text_event`](../scam-bot-backend/main.py#L227) | สร้างรหัสสุ่มเฉพาะงาน ไม่ใช้ LINE user ID หรือ token เป็นรหัส log. |
 | [`_process_text_event`](../scam-bot-backend/main.py#L246) | วิเคราะห์และตอบหนึ่ง event; แยกไว้เพื่อให้ Webhook จัดการการกันซ้ำได้ชัดเจน. |
-| [`private_reply`](../scam-bot-backend/main.py#L465) | สร้างคำตอบจากสถานะชัดเจน ไม่แปลง False หรือ fallback เป็นคำรับรอง. |
-| [`image_reply`](../scam-bot-backend/main.py#L494) | สร้างคำตอบสำหรับข้อความในรูป โดยยังไม่ส่ง LINE. |
-| [`case_id_for`](../scam-bot-backend/main.py#L528) | รหัสเคสคงที่ต่อ event: LINE ส่ง event ซ้ำหลังรีสตาร์ตก็ได้รหัสเดิม ตรงกับแถวที่บันทึกไว้แล้ว. |
-| [`open_result_case`](../scam-bot-backend/main.py#L533) | เก็บเคสให้ Mini App แล้วสร้างการ์ดผลตรวจ คืน (case_id, card, has_lesson). |
-| [`group_card`](../scam-bot-backend/main.py#L563) | การ์ดเตือนในกลุ่ม: ไม่มีปุ่มรายละเอียด ไม่เปิดเคสส่วนตัว; สร้างไม่ได้ก็ส่งข้อความธรรมดา. |
-| [`process_private_event`](../scam-bot-backend/main.py#L572) | ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม. |
-| [`process_menu_check`](../scam-bot-backend/main.py#L609) | ปุ่มเริ่มตรวจแสดงวิธีส่งข้อความ ไม่สร้างผลตรวจหรือเรียก AI. |
-| [`process_learning_event`](../scam-bot-backend/main.py#L627) | รหัสเคสไม่ใช่สิทธิ์: ต้องตรวจ LINE user ID จาก webhook ที่ผ่านลายเซ็นด้วย. |
+| [`private_reply`](../scam-bot-backend/main.py#L467) | สร้างคำตอบจากสถานะชัดเจน ไม่แปลง False หรือ fallback เป็นคำรับรอง. |
+| [`image_reply`](../scam-bot-backend/main.py#L496) | สร้างคำตอบสำหรับข้อความในรูป โดยยังไม่ส่ง LINE. |
+| [`case_id_for`](../scam-bot-backend/main.py#L530) | รหัสเคสคงที่ต่อ event: LINE ส่ง event ซ้ำหลังรีสตาร์ตก็ได้รหัสเดิม ตรงกับแถวที่บันทึกไว้แล้ว. |
+| [`open_result_case`](../scam-bot-backend/main.py#L535) | เก็บเคสให้ Mini App แล้วสร้างการ์ดผลตรวจ คืน (case_id, card, has_lesson). |
+| [`group_card`](../scam-bot-backend/main.py#L565) | การ์ดเตือนในกลุ่ม: ไม่มีปุ่มรายละเอียด ไม่เปิดเคสส่วนตัว; สร้างไม่ได้ก็ส่งข้อความธรรมดา. |
+| [`process_private_event`](../scam-bot-backend/main.py#L574) | ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม. |
+| [`process_menu_check`](../scam-bot-backend/main.py#L613) | ปุ่มเริ่มตรวจแสดงวิธีส่งข้อความ ไม่สร้างผลตรวจหรือเรียก AI. |
+| [`process_learning_event`](../scam-bot-backend/main.py#L631) | รหัสเคสไม่ใช่สิทธิ์: ต้องตรวจ LINE user ID จาก webhook ที่ผ่านลายเซ็นด้วย. |
 
 ### scam-bot-backend/messaging.py
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`get_image_content`](../scam-bot-backend/messaging.py#L12) | ดาวน์โหลดรูปไว้ในหน่วยความจำ; คืนข้อมูลรูปกับชนิดไฟล์ หรือ None. |
-| [`get_group_member_count`](../scam-bot-backend/messaging.py#L62) | ดึงจำนวนสมาชิกที่ไม่รวมบอต; ถ้าดึงไม่ได้คืน None เพื่อรักษาค่าเดิม. |
-| [`get_group_name`](../scam-bot-backend/messaging.py#L83) | อ่านชื่อกลุ่มจาก LINE; ล้มเหลวคืน None ไม่พิมพ์ token/ชื่อกลุ่มใน log. |
-| [`get_sender_display_name`](../scam-bot-backend/messaging.py#L101) | อ่านชื่อผู้ส่งจาก LINE; คืน None เมื่อ LINE ไม่อนุญาตหรืออ่านไม่สำเร็จ. |
-| [`reply_to_line`](../scam-bot-backend/messaging.py#L129) | ส่งการ์ดหรือข้อความด้วย reply token; การ์ดถูกปฏิเสธ 400 จึงลองข้อความแทน คืน bool ว่า LINE ยอมรับหรือไม่ |
+| [`text_messages`](../scam-bot-backend/messaging.py#L20) | แบ่งข้อความตรงช่องว่าง นับตามหน่วย UTF-16 แบบ LINE (5,000 ต่อข้อความ); ส่งครบไม่ได้คืน None แทนการตัดทิ้ง |
+| [`get_image_content`](../scam-bot-backend/messaging.py#L39) | ดาวน์โหลดรูปไว้ในหน่วยความจำ; คืนข้อมูลรูปกับชนิดไฟล์ หรือ None. |
+| [`get_group_member_count`](../scam-bot-backend/messaging.py#L89) | ดึงจำนวนสมาชิกที่ไม่รวมบอต; ถ้าดึงไม่ได้คืน None เพื่อรักษาค่าเดิม. |
+| [`get_group_name`](../scam-bot-backend/messaging.py#L110) | อ่านชื่อกลุ่มจาก LINE; ล้มเหลวคืน None ไม่พิมพ์ token/ชื่อกลุ่มใน log. |
+| [`get_sender_display_name`](../scam-bot-backend/messaging.py#L128) | อ่านชื่อผู้ส่งจาก LINE; คืน None เมื่อ LINE ไม่อนุญาตหรืออ่านไม่สำเร็จ. |
+| [`reply_to_line`](../scam-bot-backend/messaging.py#L156) | ส่งการ์ดหรือข้อความด้วย reply token; การ์ดถูกปฏิเสธ 400 จึงลองข้อความแทน คืน bool ว่า LINE ยอมรับหรือไม่ |
 
 ### scam-bot-backend/mini_api.py
 
@@ -233,6 +234,12 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 | [`list_cases`](../scam-bot-backend/mini_history.py#L47) | อ่านเคสส่วนตัวของ owner ล่าสุดตาม limit แล้วคืนรายการย่อ; ฐานข้อมูลล้มเหลวยก HistoryUnavailable |
 | [`get_case`](../scam-bot-backend/mini_history.py#L60) | อ่านเคสส่วนตัวตามรหัสและ owner แล้วสร้างรายละเอียดจากผลเดิม; ไม่พบหรือรหัสผิดคืน None |
 | [`delete_all`](../scam-bot-backend/mini_history.py#L75) | ลบประวัติส่วนตัวทุกสถานะของ owner; คืนจำนวนเฉพาะสถานะที่แสดงใน Mini App ไม่แตะประวัติกลุ่ม |
+
+### scam-bot-backend/privacy.py
+
+| ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
+|---|---|
+| [`redact_phone`](../scam-bot-backend/privacy.py#L8) | ปกปิดเฉพาะเบอร์มือถือไทยที่มีคำกำกับ เพื่อลดการจับเลขทั่วไปผิด; ใช้ร่วมกันทั้งประวัติและการ์ด LINE |
 
 ### scam-bot-backend/rich_menu_setup.py
 
