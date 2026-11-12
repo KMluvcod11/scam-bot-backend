@@ -139,11 +139,10 @@ def analyze_message(text: str, *, private: bool = False) -> dict:
         if url_result["status"] == "error":
             url_check_failed = True
     if url_check_failed:
-        return{
-            "status": 'error',
-            "is_scam": None,
-            "error_stage": 'safe_browsing',
-        }
+        # ตรวจลิงก์ไม่ได้ ≠ ตรวจข้อความไม่ได้: วิเคราะห์ต่อ แต่บอก AI ว่าลิงก์ยังไม่ได้ตรวจ
+        print("[URL CHECK] stage=safe_browsing skipped=true continue=text_analysis")
+    # ส่งธงให้ AI เฉพาะเมื่อตรวจลิงก์ไม่ได้จริง กรณีปกติเรียกแบบเดิมทุกประการ
+    llm_options = {"url_unchecked": True} if url_check_failed else {}
     if len(urls) > 3:
         return {
             "status": "uncertain",
@@ -165,7 +164,8 @@ def analyze_message(text: str, *, private: bool = False) -> dict:
     if private or short_risk_message:
         # ใช้ผลแบบมี status และ error โดยไม่เตือนตรงจากคะแนนหรือ fallback
         print("🤖 [STAGE 3: LLM] ส่วนตัวหรือข้อความสั้นมีคำเสี่ยง -> วิเคราะห์บริบท")
-        return analyze_with_llm(text, similarity_percent, matched_label, matched_text=matched_text, private=True)
+        return analyze_with_llm(text, similarity_percent, matched_label, matched_text=matched_text,
+                                private=True, **llm_options)
 
     # 3.2 เตือนจาก Vector เฉพาะเมื่อแมตช์ spam; คะแนน ham ไม่ใช่หลักฐาน Scam
     if matched_label == "spam" and similarity_percent >= DIRECT_SCAM_THRESHOLD:
@@ -179,7 +179,8 @@ def analyze_message(text: str, *, private: bool = False) -> dict:
     # 3.3 ความคล้ายต่ำอาจเป็นข้อความรูปแบบใหม่ จึงให้ LLM อ่านบริบทต่อ
     print("🤖 [STAGE 3: LLM] Vector ไม่เข้าเกณฑ์เตือนตรง -> วิเคราะห์บริบท")
 
-    return analyze_with_llm(text, similarity_percent, matched_label, matched_text=matched_text)
+    return analyze_with_llm(text, similarity_percent, matched_label, matched_text=matched_text,
+                            **llm_options)
 
 
 # 4. ค้นหาตัวอย่างใกล้เคียง: text → embedding 768 มิติ → RPC match_scam → คะแนน
@@ -272,7 +273,8 @@ def analyze_with_llm(
         matched_label: str | None = None,
         *,
         matched_text:str = "",
-        private: bool = False
+        private: bool = False,
+        url_unchecked: bool = False
         )-> dict:
 
     """ลองโมเดลตามลำดับ; ใช้กฎสำรองเมื่อทุกโมเดลล้มเหลว."""
@@ -332,10 +334,17 @@ def analyze_with_llm(
         "matched_label": matched_label,
         "matched_text": matched_text
     }
+    url_note = ""
+    if url_unchecked:
+        # Safe Browsing ล่ม: ห้ามให้ AI เข้าใจว่าลิงก์ผ่านการตรวจแล้ว
+        dataset_context["url_safety_check"] = "unavailable"
+        url_note = ("\nurl_safety_check เป็น unavailable แปลว่ายังตรวจลิงก์กับ Google Safe Browsing ไม่ได้"
+                    " ห้ามสรุปว่าลิงก์ปลอดภัย ให้ประเมินจากพฤติกรรมในข้อความ")
 
     prompt = (
         "ข้อมูลประกอบจาก dataset (JSON):\n"
         + json.dumps(dataset_context, ensure_ascii=False)
+        + url_note
         + "\nคะแนนนี้คือความคล้าย ไม่ใช่โอกาสเป็นมิจฉาชีพ"
         + "\nmatched_label เป็นประเภทของตัวอย่าง ไม่ใช่คำตัดสินข้อความนี้"
         + "\nห้ามตัดสินจากคะแนนหรือ label เพียงอย่างเดียว"

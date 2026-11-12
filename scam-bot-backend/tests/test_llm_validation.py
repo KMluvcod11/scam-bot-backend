@@ -99,6 +99,21 @@ class LLMValidationTests(unittest.TestCase):
             result = self.detector.analyze_with_llm("ข้อความทดสอบ", score, "spam")
         return result, generate
 
+    # test_unchecked_link_is_stated_in_prompt_only_when_flagged: AI ต้องรู้ว่าลิงก์ยังไม่ได้ตรวจ จะได้ไม่สรุปว่าปลอดภัย
+    def test_unchecked_link_is_stated_in_prompt_only_when_flagged(self):
+        generate = self.detector.client.models.generate_content
+        for flagged in (True, False):
+            with self.subTest(flagged=flagged):
+                generate.reset_mock()
+                generate.side_effect = [SimpleNamespace(text=json.dumps(self.valid))]
+                with patch("builtins.print"):
+                    self.detector.analyze_with_llm("ดูที่ https://a.test", 0.0, None, url_unchecked=flagged)
+                prompt = generate.call_args.kwargs["contents"]
+                if flagged:
+                    self.assertIn('"url_safety_check": "unavailable"', prompt)
+                else:
+                    self.assertNotIn("url_safety_check", prompt)
+
     # test_valid_false_does_not_trigger_failover: ทดสอบ is_scam=False ที่ถูกต้องไม่ถูกเข้าใจว่าโมเดลล้มเหลว
     def test_valid_false_does_not_trigger_failover(self):
         result, generate = self.run_responses([json.dumps(self.valid)])

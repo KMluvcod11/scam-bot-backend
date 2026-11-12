@@ -86,17 +86,22 @@ class URLRoutingTests(unittest.TestCase):
             expected,
         )
 
-    # test_check_error_does_not_become_no_risk_result: ทดสอบ Safe Browsing เสียไม่ถูกแปลงเป็นผลไม่เสี่ยงหรือวิเคราะห์ต่อเหมือนตรวจสำเร็จ
-    def test_check_error_does_not_become_no_risk_result(self):
+    # test_check_error_continues_to_ai_and_says_link_unchecked: Safe Browsing เสียไม่ทำให้ตรวจทั้งข้อความไม่ได้
+    # แต่ต้องวิเคราะห์ต่อด้วย AI พร้อมบอกว่ายังไม่ได้ตรวจลิงก์ (ไม่แปลงเป็นผลว่าลิงก์ปลอดภัย)
+    def test_check_error_continues_to_ai_and_says_link_unchecked(self):
         self.check.return_value = {"status": "error", "threat_types": []}
         for private in (False, True):
             with self.subTest(private=private):
+                self.llm.reset_mock()
                 result = self.detector.analyze_message("https://a.test", private=private)
-                self.assertEqual(result, {
-                    "status": "error", "is_scam": None, "error_stage": "safe_browsing",
-                })
-        self.vector.assert_not_called()
-        self.llm.assert_not_called()
+                self.assertEqual(result, self.normal_result)
+                self.assertIs(self.llm.call_args.kwargs.get("url_unchecked"), True)
+
+    # test_successful_check_does_not_flag_link_unchecked: ตรวจลิงก์สำเร็จแล้วไม่ต้องบอก AI ว่ายังไม่ได้ตรวจ
+    def test_successful_check_does_not_flag_link_unchecked(self):
+        self.check.return_value = {"status": "not_found", "threat_types": []}
+        self.detector.analyze_message("https://a.test", private=True)
+        self.assertFalse(self.llm.call_args.kwargs.get("url_unchecked", False))
 
     # test_error_on_first_url_does_not_hide_later_matched_url: ทดสอบลิงก์แรกตรวจพลาดแต่ลิงก์ถัดไปพบภัยยังแจ้งเตือน
     def test_error_on_first_url_does_not_hide_later_matched_url(self):
