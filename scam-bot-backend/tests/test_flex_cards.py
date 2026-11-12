@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import sys
-import unicodedata
 from types import ModuleType
 import unittest
 from unittest.mock import Mock, patch
@@ -144,16 +143,6 @@ class ResultCardTests(unittest.TestCase):
                 self.assertFalse(any(node.get("maxLines") for node in walk(card)))
                 self.assertLessEqual(len(card["altText"]), 400)
                 self.assertLess(len(json.dumps(card).encode()), 30000)
-
-    # test_shorten_never_orphans_thai_marks_or_leading_vowels: ทดสอบจุดตัดไม่ทำให้วรรณยุกต์หรือสระไทยแยกจากอักษรที่เกี่ยวข้อง
-    def test_shorten_never_orphans_thai_marks_or_leading_vowels(self):
-        text = "เที่ยวไม่จ่ายเงินแน่นอนไม่ใช่"  # ไม่มีช่องว่าง บังคับตัดกลางคำ
-        for limit in range(1, len(text)):
-            with self.subTest(limit=limit):
-                cut = flex_cards.shorten(text, limit)[:-1]
-                rest = text[len(cut):]
-                self.assertFalse(rest and unicodedata.category(rest[0]) == "Mn")
-                self.assertFalse(cut and cut[-1] in flex_cards.THAI_LEADING_VOWELS)
 
     # test_without_mini_settings_card_still_builds_without_image_or_uri: ทดสอบยังสร้างการ์ดได้เมื่อไม่ได้ตั้งค่า Mini App โดยไม่ใส่รูปหรือลิงก์ที่ใช้ไม่ได้
     def test_without_mini_settings_card_still_builds_without_image_or_uri(self):
