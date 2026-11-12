@@ -24,6 +24,8 @@ REQUIRED_ENVIRONMENT_VARIABLES = {
     "SUPABASE_KEY": SUPABASE_KEY,
     "CHANNEL_SECRET": LINE_CHANNEL_SECRET,
     "CHANNEL_ACCESS_TOKEN": LINE_CHANNEL_ACCESS_TOKEN,
+    # ลิงก์คือช่องทางหลักของมิจฉาชีพ ไม่มีคีย์ = ตรวจลิงก์ไม่ได้ทุกข้อความ จึงไม่ให้บอตเริ่มทำงาน
+    "SAFE_BROWSING_API_KEY": SAFE_BROWSING_API_KEY,
 }
 missing_environment_variables = [
     name for name, value in REQUIRED_ENVIRONMENT_VARIABLES.items() if not value

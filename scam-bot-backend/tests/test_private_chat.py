@@ -315,7 +315,8 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
         cases = (
             ("matched", "https://a.test/?token=SECRET", "risk_found", 1),
             ("not_found", "https://a.test https://a.test", "no_risk_found", 1),
-            ("error", "https://a.test", "error", 1),
+            # Safe Browsing ล่ม: วิเคราะห์ข้อความต่อด้วย AI พร้อมบอกว่ายังไม่ได้ตรวจลิงก์
+            ("error", "https://a.test", "no_risk_found", 1),
             ("not_found", "https://a.test https://b.test https://c.test https://d.test", "uncertain", 3),
             (None, "สวัสดี", "conversation", 0),
         )
@@ -348,7 +349,8 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(detector.check_url.call_count, checks)
                     if expected_status == "no_risk_found":
                         lookup.assert_called_once_with(text)
-                        analyze.assert_called_once_with(text, 0.0, None, matched_text="", private=True)
+                        unchecked = {"url_unchecked": True} if url_status == "error" else {}
+                        analyze.assert_called_once_with(text, 0.0, None, matched_text="", private=True, **unchecked)
                     else:
                         lookup.assert_not_called()
                         analyze.assert_not_called()
