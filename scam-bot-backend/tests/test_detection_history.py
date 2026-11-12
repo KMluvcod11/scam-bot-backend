@@ -98,6 +98,56 @@ class HistoryTests(unittest.TestCase):
         self.assertEqual(row["sender_user_id"], "U123456")
         self.assertEqual(row["sender_display_name"], "ผู้ทดสอบ")
 
+    # save_from: บันทึกข้อความจากผู้ส่ง/แชตที่กำหนด แล้วคืนชื่อที่ถูกบันทึก
+    def save_from(self, user_id, group_id="group-1"):
+        self.event.source.user_id = user_id
+        self.event.source.group_id = group_id
+        self.assertTrue(self.history.save_detection(self.event, {"is_scam": False}))
+        return self.log_table.upsert.call_args.args[0]["sender_display_name"]
+
+    # test_sender_name_is_cached_per_chat_and_user: คนเดิมในแชตเดิมไม่ต้องเรียก LINE ทุกข้อความ
+    def test_sender_name_is_cached_per_chat_and_user(self):
+        lookup = self.history.get_sender_display_name
+        self.assertEqual(self.save_from("U1"), "ผู้ทดสอบ")
+        self.assertEqual(self.save_from("U1"), "ผู้ทดสอบ")
+        self.assertEqual(lookup.call_count, 1)
+        self.save_from("U2")              # คนอื่นในกลุ่มเดิม
+        self.save_from("U1", "group-2")   # คนเดิมแต่คนละกลุ่ม (ชื่อในกลุ่มอาจต่างกัน)
+        self.assertEqual(lookup.call_count, 3)
+
+    # test_sender_name_cache_expires_and_unknown_names_retry_sooner: ชื่อเปลี่ยนได้ และอ่านไม่ได้ชั่วคราวควรลองใหม่เร็วกว่า
+    def test_sender_name_cache_expires_and_unknown_names_retry_sooner(self):
+        lookup = self.history.get_sender_display_name
+        now = [1000.0]
+        with patch.object(self.history, "monotonic", lambda: now[0]):
+            self.save_from("U1")
+            now[0] += self.history.SENDER_NAME_TTL_SECONDS - 1
+            self.save_from("U1")
+            self.assertEqual(lookup.call_count, 1)
+            now[0] += 2
+            self.save_from("U1")
+            self.assertEqual(lookup.call_count, 2)
+
+            lookup.reset_mock()
+            lookup.return_value = None
+            self.assertIsNone(self.save_from("U9"))
+            now[0] += self.history.UNKNOWN_SENDER_TTL_SECONDS - 1
+            self.save_from("U9")
+            self.assertEqual(lookup.call_count, 1)
+            now[0] += 2
+            self.save_from("U9")
+            self.assertEqual(lookup.call_count, 2)
+
+    # test_sender_name_cache_is_bounded: กลุ่มใหญ่มากต้องไม่ทำให้ RAM โตไม่จำกัด
+    def test_sender_name_cache_is_bounded(self):
+        with patch.object(self.history, "SENDER_NAME_CACHE_MAX_ENTRIES", 2):
+            for user_id in ("U1", "U2", "U3"):
+                self.save_from(user_id)
+            self.assertLessEqual(len(self.history._sender_names), 2)
+            self.history.get_sender_display_name.reset_mock()
+            self.save_from("U3")  # คนล่าสุดยังอยู่ใน cache
+            self.history.get_sender_display_name.assert_not_called()
+
 
     # test_save_detection_uses_case_id_as_row_id: ทดสอบแปลง case_id เป็น UUID ของแถวประวัติพร้อมรักษาการกัน event ซ้ำ
     def test_save_detection_uses_case_id_as_row_id(self):

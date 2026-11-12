@@ -120,14 +120,15 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`_history_client`](../scam-bot-backend/detection_history.py#L19) | สร้างและเก็บ client เขียนประวัติไว้ใช้ซ้ำ โดยกำหนด timeout ของ PostgREST สิบวินาที |
-| [`_source`](../scam-bot-backend/detection_history.py#L28) | อ่านชนิดแชตจาก event แล้วคืนคู่ชนิดและรหัส user/group/room ที่ตรงกัน |
-| [`_status`](../scam-bot-backend/detection_history.py#L36) | แปลงผลตรวจเป็นสถานะที่บันทึกได้ โดยแยก error, uncertain และข้อความกลุ่มที่ข้ามการตรวจ |
-| [`save_group_join`](../scam-bot-backend/detection_history.py#L50) | เก็บกลุ่มก่อนดึงชื่อ; ไม่สร้าง detection_logs เพราะ join ไม่ใช่ข้อความ. |
-| [`save_group_members`](../scam-bot-backend/detection_history.py#L76) | บันทึกจำนวนล่าสุดจาก LINE โดยไม่บวก/ลบซ้ำจาก webhook ที่ส่งซ้ำ. |
-| [`sync_missing_group_members`](../scam-bot-backend/detection_history.py#L97) | เติมจำนวนสมาชิกของกลุ่มเดิมที่ยังเป็น null; ไม่แก้ประวัติข้อความ. |
-| [`save_group_leave`](../scam-bot-backend/detection_history.py#L123) | ซ่อนกลุ่มที่บอตออก โดยไม่ลบกลุ่ม ชื่อ หรือประวัติการตรวจ. |
-| [`save_detection`](../scam-bot-backend/detection_history.py#L141) | รับ event และผลตรวจ ปกปิดเบอร์ที่มีคำกำกับ แล้วบันทึกครั้งเดียวต่อ event; คืน False เมื่อบันทึกไม่สำเร็จ |
+| [`_history_client`](../scam-bot-backend/detection_history.py#L48) | สร้างและเก็บ client เขียนประวัติไว้ใช้ซ้ำ โดยกำหนด timeout ของ PostgREST สิบวินาที |
+| [`_source`](../scam-bot-backend/detection_history.py#L57) | อ่านชนิดแชตจาก event แล้วคืนคู่ชนิดและรหัส user/group/room ที่ตรงกัน |
+| [`_status`](../scam-bot-backend/detection_history.py#L65) | แปลงผลตรวจเป็นสถานะที่บันทึกได้ โดยแยก error, uncertain และข้อความกลุ่มที่ข้ามการตรวจ |
+| [`save_group_join`](../scam-bot-backend/detection_history.py#L79) | เก็บกลุ่มก่อนดึงชื่อ; ไม่สร้าง detection_logs เพราะ join ไม่ใช่ข้อความ. |
+| [`save_group_members`](../scam-bot-backend/detection_history.py#L105) | บันทึกจำนวนล่าสุดจาก LINE โดยไม่บวก/ลบซ้ำจาก webhook ที่ส่งซ้ำ. |
+| [`sync_missing_group_members`](../scam-bot-backend/detection_history.py#L126) | เติมจำนวนสมาชิกของกลุ่มเดิมที่ยังเป็น null; ไม่แก้ประวัติข้อความ. |
+| [`save_group_leave`](../scam-bot-backend/detection_history.py#L152) | ซ่อนกลุ่มที่บอตออก โดยไม่ลบกลุ่ม ชื่อ หรือประวัติการตรวจ. |
+| [`_sender_name`](../scam-bot-backend/detection_history.py#L29) | คืนชื่อผู้ส่งจาก cache (6 ชม.; อ่านไม่ได้จำ 10 นาที; สูงสุด 1,000 รายการ) หรือถาม LINE เมื่อไม่มี/หมดอายุ; ลดการเรียก API ทุกข้อความ |
+| [`save_detection`](../scam-bot-backend/detection_history.py#L170) | รับ event และผลตรวจ ปกปิดเบอร์ที่มีคำกำกับ แล้วบันทึกครั้งเดียวต่อ event; คืน False เมื่อบันทึกไม่สำเร็จ |
 
 ### scam-bot-backend/detector.py
 
@@ -285,11 +286,11 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`extract_urls`](../scam-bot-backend/url_checker.py#L18) | ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม. |
-| [`validate_url`](../scam-bot-backend/url_checker.py#L35) | ตรวจ URL แบบ HTTP/HTTPS ที่ไม่มี credentials หรืออักขระผิดกฎ แล้วคืน URL ที่ตัด fragment; ผิดยก ValueError |
-| [`parse_safe_browsing_response`](../scam-bot-backend/url_checker.py#L80) | แปลงผลจาก Google เป็นผลตรวจและอายุ cache หน่วยวินาที. |
-| [`_request_safe_browsing`](../scam-bot-backend/url_checker.py#L129) | เรียก Google แล้วคืนผลตรวจพร้อมอายุ cache. |
-| [`check_url`](../scam-bot-backend/url_checker.py#L154) | ตรวจหนึ่ง URL; คืน matched, not_found หรือ error. |
+| [`extract_urls`](../scam-bot-backend/url_checker.py#L45) | ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม. |
+| [`validate_url`](../scam-bot-backend/url_checker.py#L61) | ตรวจ URL แบบ HTTP/HTTPS ที่ไม่มี credentials หรืออักขระผิดกฎ แล้วคืน URL ที่ตัด fragment; ผิดยก ValueError |
+| [`parse_safe_browsing_response`](../scam-bot-backend/url_checker.py#L106) | แปลงผลจาก Google เป็นผลตรวจและอายุ cache หน่วยวินาที. |
+| [`_request_safe_browsing`](../scam-bot-backend/url_checker.py#L155) | เรียก Google แล้วคืนผลตรวจพร้อมอายุ cache. |
+| [`check_url`](../scam-bot-backend/url_checker.py#L180) | ตรวจหนึ่ง URL; คืน matched, not_found หรือ error. |
 
 ## ชุดทดสอบและวิธีตรวจ
 

@@ -1,5 +1,8 @@
 """Persist one LINE text event for the dashboard without logging secrets."""
+from collections import OrderedDict
 from datetime import datetime, timezone
+from threading import Lock
+from time import monotonic
 import uuid
 
 from supabase import create_client
@@ -13,6 +16,32 @@ from privacy import redact_phone  # noqa: F401
 
 
 _client = None
+
+# ชื่อผู้ส่งเปลี่ยนไม่บ่อย จึงจำไว้แทนการเรียก LINE ทุกข้อความ (ลดเวลาและ rate limit ในกลุ่มที่คึกคัก)
+# อ่านชื่อไม่ได้ (None) จำสั้นกว่า เผื่อเป็นปัญหาชั่วคราว; cache อยู่ใน process เดียว หายเมื่อ restart
+SENDER_NAME_TTL_SECONDS = 6 * 60 * 60
+UNKNOWN_SENDER_TTL_SECONDS = 10 * 60
+SENDER_NAME_CACHE_MAX_ENTRIES = 1000
+_sender_names = OrderedDict()
+_sender_names_lock = Lock()
+
+
+def _sender_name(kind, source_id, user_id):
+    """คืนชื่อผู้ส่งจาก cache หรือถาม LINE เมื่อยังไม่มี/หมดอายุ; คืน None เมื่ออ่านไม่ได้."""
+    key = (kind, source_id, user_id)
+    with _sender_names_lock:
+        cached = _sender_names.get(key)
+        if cached is not None and cached[0] > monotonic():
+            return cached[1]
+    # เรียก LINE นอก lock เพื่อไม่ให้งานอื่นรอ network
+    name = get_sender_display_name(kind, source_id, user_id)
+    ttl = SENDER_NAME_TTL_SECONDS if name is not None else UNKNOWN_SENDER_TTL_SECONDS
+    with _sender_names_lock:
+        _sender_names.pop(key, None)
+        _sender_names[key] = (monotonic() + ttl, name)
+        while len(_sender_names) > SENDER_NAME_CACHE_MAX_ENTRIES:
+            _sender_names.popitem(last=False)  # ทิ้งรายการที่ถูกเพิ่มนานที่สุด
+    return name
 
 
 # _history_client: สร้างและเก็บ client เขียนประวัติไว้ใช้ซ้ำ โดยกำหนด timeout ของ PostgREST สิบวินาที
@@ -170,7 +199,7 @@ def save_detection(event, result, *, warning_attempted=False, warning_sent=None,
         stored_text = redact_phone(text)
         stored_reason = redact_phone(result.get("reason"))
         sender_user_id = getattr(event.source, "user_id", None)
-        sender_display_name = (get_sender_display_name(kind, line_source_id, sender_user_id)
+        sender_display_name = (_sender_name(kind, line_source_id, sender_user_id)
                                if sender_user_id else None)
         row = {
             "line_event_id": event.webhook_event_id,
