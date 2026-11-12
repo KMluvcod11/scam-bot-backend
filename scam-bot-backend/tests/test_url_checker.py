@@ -35,11 +35,38 @@ class URLValidationTests(unittest.TestCase):
             side_effect=AssertionError("External HTTP is forbidden in offline tests"),
         ))
 
-    # test_extract_returns_empty_list_without_http_urls: ทดสอบข้อความที่ไม่มี HTTP/HTTPS คืนรายการลิงก์ว่าง
-    def test_extract_returns_empty_list_without_http_urls(self):
+    # test_extract_ignores_text_that_is_not_a_web_link: ข้อความทั่วไปไม่ถูกนับเป็นลิงก์ (เกิน 3 ลิงก์ผลจะเป็น uncertain)
+    def test_extract_ignores_text_that_is_not_a_web_link(self):
         self.assertEqual(
-            self.checker.extract_urls("ข้อความทั่วไป www.example.com ftp://example.com"),
+            self.checker.extract_urls(
+                "ข้อความทั่วไป ftp://example.com example.com Mr.Smith ราคา 1.5 บาท "
+                "อีเมล user@example.com/x"
+            ),
             [],
+        )
+
+    # test_extract_www_and_bare_domains_with_path_get_scheme_for_checking: LINE ทำลิงก์แบบนี้ให้กดได้ จึงต้องส่งตรวจด้วย
+    def test_extract_www_and_bare_domains_with_path_get_scheme_for_checking(self):
+        self.assertEqual(
+            self.checker.extract_urls("ดูที่ www.evil-bank.example และ bit.ly/abc123 หรือ WWW.Shop.example/x"),
+            ["http://www.evil-bank.example", "http://bit.ly/abc123", "http://WWW.Shop.example/x"],
+        )
+
+    # test_extract_stops_at_thai_text_written_next_to_the_link: ข้อความไทยมักไม่เว้นวรรคหน้า/หลังลิงก์
+    def test_extract_stops_at_thai_text_written_next_to_the_link(self):
+        self.assertEqual(
+            self.checker.extract_urls("กดที่https://a.example/loginด่วน หรือดูที่www.b.exampleนะ เข้าbit.ly/xyzเลย"),
+            ["https://a.example/login", "http://www.b.example", "http://bit.ly/xyz"],
+        )
+
+    # test_extract_drops_trailing_punctuation_but_keeps_balanced_parentheses: วรรคตอนท้ายประโยคไม่ใช่ส่วนของลิงก์
+    def test_extract_drops_trailing_punctuation_but_keeps_balanced_parentheses(self):
+        self.assertEqual(
+            self.checker.extract_urls(
+                "เข้าลิงก์ (https://a.example/x). หรือ https://b.example/y, และ "
+                "https://en.example.org/wiki/A_(b)!"
+            ),
+            ["https://a.example/x", "https://b.example/y", "https://en.example.org/wiki/A_(b)"],
         )
 
     # test_extract_preserves_protocol_case_path_query_and_fragment: ทดสอบดึงลิงก์โดยคงตัวพิมพ์ path query และ fragment ตามข้อความเดิม
