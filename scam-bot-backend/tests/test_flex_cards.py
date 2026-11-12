@@ -316,6 +316,35 @@ class CardReplyTests(unittest.TestCase):
             self.module.reply_to_line("token", "โทร 081-234-5678")
         self.assertNotIn("081-234-5678", json.dumps(post.call_args.kwargs["json"]))
 
+    # test_plain_text_replies_never_carry_clickable_links: ข้อความธรรมดาที่ LINE ทำลิงก์ให้กดได้ต้องไม่มีลิงก์ที่กดได้
+    # เช่น เหตุผลจาก AI ที่ยกลิงก์มา ในคำตอบส่วนตัว คำเตือนกลุ่ม ผลรูปภาพ หรือบทเรียน
+    def test_plain_text_replies_never_carry_clickable_links(self):
+        reason = "• เหตุผล: ให้กด https://phish.example/login หรือ www.bank.example ทันที"
+        rejected = Mock()
+        rejected.status_code = 400
+        rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
+        cases = {
+            "plain": ({}, [Mock()]),
+            "card_rejected": ({"card": self.card}, [rejected, Mock()]),
+        }
+        for name, (options, responses) in cases.items():
+            with self.subTest(path=name), patch.dict(os.environ, {"MINI_LIFF_ID": "", "LINE_LOGIN_CHANNEL_ID": ""}), \
+                    patch.object(self.module.requests, "post", side_effect=responses) as post:
+                self.assertTrue(self.module.reply_to_line("token", reason, **options))
+                text = post.call_args.kwargs["json"]["messages"][0]["text"]
+                self.assertNotIn("https://", text)
+                self.assertNotIn("www.bank", text)
+                self.assertIn("hxxps://phish[.]example/login", text)
+                self.assertIn("www[.]bank[.]example", text)
+
+    # test_learning_button_uri_is_not_defanged: ลิงก์ปุ่ม Mini App เป็น action ไม่ใช่ข้อความ ต้องใช้งานได้ตามเดิม
+    def test_learning_button_uri_is_not_defanged(self):
+        with patch.dict(os.environ, {"MINI_LIFF_ID": "1234567890-TestApp", "LINE_LOGIN_CHANNEL_ID": "1234567890"}), \
+                patch.object(self.module.requests, "post", return_value=Mock()) as post:
+            self.module.reply_to_line("token", "ผลตรวจ", learn_case_id=CASE_ID)
+        button = post.call_args.kwargs["json"]["messages"][-1]["template"]["actions"][0]
+        self.assertEqual(button["uri"], f"https://liff.line.me/1234567890-TestApp?case={CASE_ID}")
+
     def test_five_text_chunks_replace_card_without_losing_content(self):
         text = "ข้อความครบ " * 2100
         with patch.object(self.module.requests, "post", return_value=Mock()) as post:

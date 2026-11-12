@@ -5,6 +5,7 @@ import re
 from urllib.parse import quote
 from bot_observability import log as print, timed_call
 from config import LINE_CHANNEL_ACCESS_TOKEN
+from flex_cards import defang_links
 from mini_api import get_mini_case_url
 from privacy import redact_phone
 
@@ -161,8 +162,10 @@ def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | N
         "Content-Type": "application/json",
         "Authorization": f"Bearer {LINE_CHANNEL_ACCESS_TOKEN}"
     }
-    message_text = redact_phone(message_text) or ""
-    continuation = redact_phone(continuation) or ""
+    # ข้อความธรรมดาทุกชิ้นผ่านจุดนี้: ปกปิดเบอร์ และทำลิงก์ให้กดไม่ได้ (LINE ทำลิงก์ในข้อความธรรมดาให้กดได้)
+    # ใช้กับเหตุผลจาก AI ที่อาจยกลิงก์มิจฉาชีพมา; ลิงก์ปุ่ม Mini App เป็น action จึงไม่ถูกแก้
+    message_text = defang_links(redact_phone(message_text) or "")
+    continuation = defang_links(redact_phone(continuation) or "")
     fallback_text = continuation or message_text
     if card:
         messages = [card]
