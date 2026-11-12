@@ -202,12 +202,12 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`text_messages`](../scam-bot-backend/messaging.py#L20) | แบ่งข้อความตรงช่องว่าง นับตามหน่วย UTF-16 แบบ LINE (5,000 ต่อข้อความ); ส่งครบไม่ได้คืน None แทนการตัดทิ้ง |
-| [`get_image_content`](../scam-bot-backend/messaging.py#L39) | ดาวน์โหลดรูปไว้ในหน่วยความจำ; คืนข้อมูลรูปกับชนิดไฟล์ หรือ None. |
-| [`get_group_member_count`](../scam-bot-backend/messaging.py#L89) | ดึงจำนวนสมาชิกที่ไม่รวมบอต; ถ้าดึงไม่ได้คืน None เพื่อรักษาค่าเดิม. |
-| [`get_group_name`](../scam-bot-backend/messaging.py#L110) | อ่านชื่อกลุ่มจาก LINE; ล้มเหลวคืน None ไม่พิมพ์ token/ชื่อกลุ่มใน log. |
-| [`get_sender_display_name`](../scam-bot-backend/messaging.py#L128) | อ่านชื่อผู้ส่งจาก LINE; คืน None เมื่อ LINE ไม่อนุญาตหรืออ่านไม่สำเร็จ. |
-| [`reply_to_line`](../scam-bot-backend/messaging.py#L156) | ส่งการ์ดหรือข้อความด้วย reply token; การ์ดถูกปฏิเสธ 400 จึงลองข้อความแทน คืน bool ว่า LINE ยอมรับหรือไม่ |
+| [`text_messages`](../scam-bot-backend/messaging.py#L21) | แบ่งข้อความตรงช่องว่าง นับตามหน่วย UTF-16 แบบ LINE (5,000 ต่อข้อความ); ส่งครบไม่ได้คืน None แทนการตัดทิ้ง |
+| [`get_image_content`](../scam-bot-backend/messaging.py#L40) | ดาวน์โหลดรูปไว้ในหน่วยความจำ; คืนข้อมูลรูปกับชนิดไฟล์ หรือ None. |
+| [`get_group_member_count`](../scam-bot-backend/messaging.py#L90) | ดึงจำนวนสมาชิกที่ไม่รวมบอต; ถ้าดึงไม่ได้คืน None เพื่อรักษาค่าเดิม. |
+| [`get_group_name`](../scam-bot-backend/messaging.py#L111) | อ่านชื่อกลุ่มจาก LINE; ล้มเหลวคืน None ไม่พิมพ์ token/ชื่อกลุ่มใน log. |
+| [`get_sender_display_name`](../scam-bot-backend/messaging.py#L129) | อ่านชื่อผู้ส่งจาก LINE; คืน None เมื่อ LINE ไม่อนุญาตหรืออ่านไม่สำเร็จ. |
+| [`reply_to_line`](../scam-bot-backend/messaging.py#L157) | ส่งการ์ดหรือข้อความด้วย reply token; ข้อความธรรมดาทุกชิ้นปกปิดเบอร์และทำลิงก์ให้กดไม่ได้; การ์ดถูกปฏิเสธ 400 จึงลองข้อความแทน คืน bool ว่า LINE ยอมรับหรือไม่ |
 
 ### scam-bot-backend/mini_api.py
 
@@ -285,11 +285,11 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`extract_urls`](../scam-bot-backend/url_checker.py#L18) | ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม. |
-| [`validate_url`](../scam-bot-backend/url_checker.py#L35) | ตรวจ URL แบบ HTTP/HTTPS ที่ไม่มี credentials หรืออักขระผิดกฎ แล้วคืน URL ที่ตัด fragment; ผิดยก ValueError |
-| [`parse_safe_browsing_response`](../scam-bot-backend/url_checker.py#L80) | แปลงผลจาก Google เป็นผลตรวจและอายุ cache หน่วยวินาที. |
-| [`_request_safe_browsing`](../scam-bot-backend/url_checker.py#L129) | เรียก Google แล้วคืนผลตรวจพร้อมอายุ cache. |
-| [`check_url`](../scam-bot-backend/url_checker.py#L154) | ตรวจหนึ่ง URL; คืน matched, not_found หรือ error. |
+| [`extract_urls`](../scam-bot-backend/url_checker.py#L45) | ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม. |
+| [`validate_url`](../scam-bot-backend/url_checker.py#L61) | ตรวจ URL แบบ HTTP/HTTPS ที่ไม่มี credentials หรืออักขระผิดกฎ แล้วคืน URL ที่ตัด fragment; ผิดยก ValueError |
+| [`parse_safe_browsing_response`](../scam-bot-backend/url_checker.py#L106) | แปลงผลจาก Google เป็นผลตรวจและอายุ cache หน่วยวินาที. |
+| [`_request_safe_browsing`](../scam-bot-backend/url_checker.py#L155) | เรียก Google แล้วคืนผลตรวจพร้อมอายุ cache. |
+| [`check_url`](../scam-bot-backend/url_checker.py#L180) | ตรวจหนึ่ง URL; คืน matched, not_found หรือ error. |
 
 ## ชุดทดสอบและวิธีตรวจ
 
