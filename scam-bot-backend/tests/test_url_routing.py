@@ -33,6 +33,15 @@ class URLRoutingTests(unittest.TestCase):
         self.vector.assert_not_called()
         self.llm.assert_not_called()
 
+    # test_short_group_message_with_www_link_is_checked_not_bypassed: ข้อความสั้นในกลุ่มที่มีลิงก์ www. ต้องตรวจลิงก์และบริบท
+    def test_short_group_message_with_www_link_is_checked_not_bypassed(self):
+        self.check.return_value = {"status": "not_found", "threat_types": []}
+        text = "ดูที่ www.evil-bank.example"
+        self.assertEqual(self.detector.analyze_message(text), self.normal_result)
+        self.check.assert_called_once_with("http://www.evil-bank.example")
+        self.vector.assert_called_once_with(text)
+        self.llm.assert_called_once()
+
     # test_long_text_without_urls_keeps_existing_analysis: ทดสอบข้อความยาวไม่มี URL ใช้เวกเตอร์และ LLM โดยไม่เรียกตรวจลิงก์
     def test_long_text_without_urls_keeps_existing_analysis(self):
         text = "พรุ่งนี้ประชุมงานกลุ่มที่ห้องสมุดและเตรียมสไลด์มาให้พร้อม"

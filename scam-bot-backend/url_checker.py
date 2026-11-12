@@ -15,17 +15,43 @@ _url_cache_lock = Lock()
 _URL_CACHE_MAX_ENTRIES = 1000
 
 
+# อักขระที่ไม่ใช่ส่วนของลิงก์: ช่องว่าง วงเล็บแหลม อัญประกาศ และอักษรไทย
+# (ข้อความไทยมักเขียนติดลิงก์โดยไม่เว้นวรรค เช่น "กดที่https://a.com/xด่วน")
+_URL_CHARS = r'[^\s<>"“”฀-๿]'
+# 1) มี http(s):// หรือ www. นำหน้า  2) โดเมนเปล่าที่มี path เช่น bit.ly/abc
+# โดเมนเปล่าไม่มี path (example.com, Mr.Smith) ไม่นับ เพราะเกิน 3 ลิงก์ผลจะกลายเป็น uncertain
+_URL_PATTERN = re.compile(
+    rf"(?:https?://|www\.){_URL_CHARS}+"
+    rf"|(?<![A-Za-z0-9@./:_-])[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{{2,24}}/{_URL_CHARS}*",
+    re.IGNORECASE,
+)
+_TRAILING_PUNCTUATION = ".,;:!?'…"
+_CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
+
+
+def _trim_url(url: str) -> str:
+    """ตัดวรรคตอนท้ายประโยคออก แต่คงวงเล็บที่เปิด-ปิดครบในลิงก์ เช่น /wiki/A_(b)."""
+    while url:
+        last = url[-1]
+        if last in _TRAILING_PUNCTUATION:
+            url = url[:-1]
+        elif last in _CLOSING_BRACKETS and url.count(last) > url.count(_CLOSING_BRACKETS[last]):
+            url = url[:-1]
+        else:
+            break
+    return url
+
+
 def extract_urls(text: str) -> list[str]:
-    """ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม."""
+    """ดึงลิงก์เว็บที่ไม่ซ้ำตามลำดับเดิม; ลิงก์ที่ไม่มี scheme เติม http:// เพื่อส่งตรวจกับ Google ได้."""
     if not isinstance(text, str):
         raise ValueError("Text must be a string")
 
     urls = []
-    # shortcut: ใช้ช่องว่างและอัญประกาศเป็นตัวคั่น, ขยายเมื่อรองรับวงเล็บและ URL จาก OCR หลายบรรทัด
-    pattern = r'https?://[^\s<>"“”]+'
-
-    for match in re.finditer(pattern, text, flags=re.IGNORECASE):
-        url = match.group(0)
+    for match in _URL_PATTERN.finditer(text):
+        url = _trim_url(match.group(0))
+        if not re.match(r"https?://", url, flags=re.IGNORECASE):
+            url = "http://" + url
         if url not in urls:
             urls.append(url)
 
