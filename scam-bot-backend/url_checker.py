@@ -31,6 +31,7 @@ _TRAILING_PUNCTUATION = ".,;:!?'…"
 _CLOSING_BRACKETS = {")": "(", "]": "[", "}": "{"}
 
 
+# _trim_url: ตัดวรรคตอนท้ายลิงก์ เช่น จุด จุลภาค วงเล็บที่ไม่มีคู่
 def _trim_url(url: str) -> str:
     """ตัดวรรคตอนท้ายประโยคออก แต่คงวงเล็บที่เปิด-ปิดครบในลิงก์ เช่น /wiki/A_(b)."""
     while url:
@@ -44,6 +45,7 @@ def _trim_url(url: str) -> str:
     return url
 
 
+# extract_urls: ดึงลิงก์ทั้งหมดจากข้อความ (ไม่ซ้ำ เรียงตามลำดับ)
 def extract_urls(text: str) -> list[str]:
     """ดึงลิงก์เว็บที่ไม่ซ้ำตามลำดับเดิม; ลิงก์ที่ไม่มี scheme เติม http:// เพื่อส่งตรวจกับ Google ได้."""
     if not isinstance(text, str):
@@ -105,6 +107,7 @@ def validate_url(url: str) -> str:
         "",
     ))
 
+# parse_safe_browsing_response: ตรวจและแปลงผลจาก Google เป็น matched / not_found + อายุ cache
 def parse_safe_browsing_response(data: object) -> tuple[dict, float]:
     """แปลงผลจาก Google เป็นผลตรวจและอายุ cache หน่วยวินาที."""
     if not isinstance(data, dict):
@@ -179,6 +182,7 @@ def  _request_safe_browsing(url: str) -> tuple[dict, float]:
 
 
 
+# check_url: ตรวจลิงก์ 1 ลิงก์กับ Safe Browsing (ใช้ cache ถ้ามี)
 def check_url(url: str) -> dict:
     """ตรวจหนึ่ง URL; คืน matched, not_found หรือ error."""
     try:

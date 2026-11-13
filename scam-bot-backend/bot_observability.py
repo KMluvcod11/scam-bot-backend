@@ -31,12 +31,14 @@ def error_summary(error):
     return " ".join(fields)
 
 
+# log: พิมพ์ log พร้อม [trace=...] นำหน้า ใช้แทน print ทั้งโปรเจกต์
 def log(*values, **kwargs):
     """ContextVar แยกรหัสแต่ละงาน และถูกส่งต่อไปยัง AnyIO thread pool."""
     kwargs.setdefault("flush", True)
     builtins.print(f"[trace={trace_id.get()}]", *values, **kwargs)
 
 
+# timed_call: เรียกฟังก์ชันแล้ว log เวลาที่ใช้ (สำเร็จ = [TIME], พัง = [ERROR] แล้วโยน error ต่อ)
 def timed_call(stage, operation, *args, **kwargs):
     """จับเวลาโดยคงค่า return/exception เดิม; returned ไม่ใช่การยืนยัน HTTP success."""
     started = monotonic()

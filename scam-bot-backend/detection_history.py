@@ -26,6 +26,7 @@ _sender_names = OrderedDict()
 _sender_names_lock = Lock()
 
 
+# _sender_name: หาชื่อผู้ส่ง: ใช้ cache ก่อน ถ้าไม่มีหรือหมดอายุค่อยถาม LINE
 def _sender_name(kind, source_id, user_id):
     """คืนชื่อผู้ส่งจาก cache หรือถาม LINE เมื่อยังไม่มี/หมดอายุ; คืน None เมื่ออ่านไม่ได้."""
     key = (kind, source_id, user_id)
@@ -76,6 +77,7 @@ def _status(result, text, kind):
     return "no_risk_found"
 
 
+# save_group_join: บอตถูกเชิญเข้ากลุ่ม: บันทึกกลุ่ม ชื่อกลุ่ม และจำนวนสมาชิก
 def save_group_join(event):
     """เก็บกลุ่มก่อนดึงชื่อ; ไม่สร้าง detection_logs เพราะ join ไม่ใช่ข้อความ."""
     try:
@@ -102,6 +104,7 @@ def save_group_join(event):
         return False
 
 
+# save_group_members: มีคนเข้า/ออกกลุ่ม: อัปเดตจำนวนสมาชิกล่าสุดจาก LINE
 def save_group_members(event):
     """บันทึกจำนวนล่าสุดจาก LINE โดยไม่บวก/ลบซ้ำจาก webhook ที่ส่งซ้ำ."""
     try:
@@ -123,6 +126,7 @@ def save_group_members(event):
         return False
 
 
+# sync_missing_group_members: เติมจำนวนสมาชิกให้กลุ่มเก่าที่ยังไม่มีค่า (รันจาก scripts/sync_group_members.py)
 def sync_missing_group_members():
     """เติมจำนวนสมาชิกของกลุ่มเดิมที่ยังเป็น null; ไม่แก้ประวัติข้อความ."""
     db = _history_client()
@@ -149,6 +153,7 @@ def sync_missing_group_members():
     return {"missing": len(rows), "updated": updated}
 
 
+# save_group_leave: บอตออกจากกลุ่ม: ซ่อนกลุ่มจาก Dashboard แต่ไม่ลบประวัติ
 def save_group_leave(event):
     """ซ่อนกลุ่มที่บอตออก โดยไม่ลบกลุ่ม ชื่อ หรือประวัติการตรวจ."""
     try:

@@ -35,6 +35,7 @@ LONG_QUOTE = "ข้อความยาว อ่านฉบับเต็�
 LONG_REASON = "เหตุผลมีรายละเอียดเพิ่มเติม อ่านฉบับเต็มในข้อความถัดจากการ์ด"
 
 
+# reason_items: แยกเหตุผลจากผลตรวจเป็นรายการทีละข้อ สำหรับแสดงในการ์ด
 def reason_items(reason) -> list[str]:
     """แยกเหตุผลเป็นข้อ ๆ ตามขึ้นบรรทัดใหม่หรือ • ที่มากับผลตรวจ ไม่มีก็เป็นข้อเดียว."""
     if not isinstance(reason, str) or not reason.strip():
@@ -46,6 +47,7 @@ def reason_items(reason) -> list[str]:
     return parts
 
 
+# defang_links: ทำลิงก์ให้กดไม่ได้ https://a.com → hxxps://a[.]com
 def defang_links(text: str) -> str:
     """ทำลิงก์ให้อ่านออกแต่กดไม่ได้ เช่น https://a.com → hxxps://a[.]com.
 
@@ -57,6 +59,7 @@ def defang_links(text: str) -> str:
     return re.sub(r"(?<=[A-Za-z0-9-])\.(?=[A-Za-z])", "[.]", text)
 
 
+# build_result_continuation: สร้างข้อความผลตรวจฉบับเต็ม ส่งต่อท้ายการ์ด
 def build_result_continuation(result: dict, *, source: str, quote: str) -> str:
     """คืนผลฉบับเต็มที่ปกปิดเบอร์และทำลิงก์ให้กดไม่ได้แล้ว เมื่อเนื้อหาไม่พอดีการ์ด; ไม่เรียก AI."""
     style = card_style(result)
@@ -74,6 +77,7 @@ def build_result_continuation(result: dict, *, source: str, quote: str) -> str:
             f"\n\n{DISCLAIMER}")
 
 
+# asset_url: สร้าง URL รูปไอคอนจากเว็บ Mini App (ต้องเป็น HTTPS)
 def asset_url(path: str) -> str | None:
     """รูปอยู่ใน public/ ของเว็บ Mini App; LINE ดึงรูปได้เฉพาะ HTTPS."""
     try:
@@ -90,6 +94,7 @@ def mascot_url(pose: str) -> str | None:
     return asset_url(f"mascot/{pose}.png")
 
 
+# note_heading: สร้างหัวกรอบคำเตือน/คำแนะนำในการ์ด
 def note_heading(style: dict) -> dict:
     """หัวกรอบคำเตือน/คำแนะนำ; มีไอคอนเมื่อโหลดรูปได้ ไม่งั้นเป็นตัวหนังสืออย่างเดียว."""
     text = {"type": "text", "text": style["note_title"], "weight": "bold", "size": "md",
@@ -101,6 +106,7 @@ def note_heading(style: dict) -> dict:
         {"type": "icon", "url": icon, "size": "lg"}, text]}
 
 
+# detail_action: สร้างปุ่ม 'ดูรายละเอียด' ในการ์ด (เปิด Mini App หรือ postback)
 def detail_action(case_id: str | None, allow_postback: bool) -> dict | None:
     """ปุ่มเปิด Mini App ถ้าตั้งค่าครบ; ไม่ครบใช้ postback บทเรียนในแชตแทน (ถ้าอนุญาต)."""
     if not case_id:
@@ -127,6 +133,7 @@ def bullet(text: str) -> dict:
     ]}
 
 
+# card_style: เลือกสี/ข้อความของการ์ดตามสถานะผลตรวจ
 def card_style(result: dict) -> dict | None:
     """เลือกแบบการ์ดจากสถานะ; ผลที่เตือน (is_scam=True เช่นกฎสำรองในกลุ่ม) ใช้แบบพบสัญญาณเสี่ยงเสมอ."""
     status = result.get("status")
@@ -135,6 +142,7 @@ def card_style(result: dict) -> dict | None:
     return STATUS_STYLES.get(status)
 
 
+# build_result_card: สร้างการ์ด Flex ผลตรวจ 1 ใบ
 def build_result_card(result: dict, *, source: str, quote: str, case_id: str | None,
                       allow_postback: bool = False, group: bool = False) -> dict | None:
     """รับผลตรวจ คืน Flex Message หนึ่งข้อความ หรือ None ถ้าสถานะนี้ไม่ใช้การ์ด.

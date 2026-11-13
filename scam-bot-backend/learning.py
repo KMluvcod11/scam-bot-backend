@@ -11,6 +11,7 @@ from uuid import uuid4
 URL_PATTERN = re.compile(r"https?://|www\.", re.IGNORECASE)
 
 
+# case_category: แยกเคสเป็น 'link' หรือ 'message' สำหรับหน้า Mini App
 def case_category(text: str) -> str:
     """แยกประเภทเคสให้หน้า Mini App: มีลิงก์ = 'link', ไม่มี = 'message' (ไม่ได้ตัดสินความเสี่ยง)."""
     if URL_PATTERN.search(text):
@@ -18,6 +19,7 @@ def case_category(text: str) -> str:
     return "message"
 
 
+# lesson_points: เลือกคำแนะนำตามคำที่พบในข้อความ (เช่น OTP, โอนเงิน)
 def lesson_points(text: str) -> list[dict]:
     """คำที่พบใช้เลือกคำแนะนำเท่านั้น ไม่ใช้ตัดสินความเสี่ยงซ้ำ."""
     topics = (
@@ -46,6 +48,7 @@ def lesson_points(text: str) -> list[dict]:
     return points
 
 
+# build_lesson: สร้างข้อความบทเรียนสำหรับปุ่ม 'เรียนรู้จากเคสนี้'
 def build_lesson(text: str, result: dict) -> str | None:
     """เลือกหัวข้อจากคำที่มีจริง ไม่ใช้คีย์เวิร์ดตัดสินว่าเป็นมิจฉาชีพ."""
     status = result.get("status")
@@ -84,6 +87,7 @@ NEXT_STEPS = {
 }
 
 
+# build_case_detail: จัดข้อมูลเคสสำหรับหน้ารายละเอียดใน Mini App
 def build_case_detail(text: str, result: dict, received_at: str) -> dict:
     """รับผลเดิม 3 สถานะ (เสี่ยง/ควรตรวจเพิ่ม/ยังไม่พบ) จัดข้อมูลสำหรับหน้าเว็บโดยไม่เรียก AI."""
     status = result["status"]
@@ -101,6 +105,7 @@ def build_case_detail(text: str, result: dict, received_at: str) -> dict:
     }
 
 
+# LessonStore: ที่เก็บบทเรียนใน RAM อายุ 15 นาที เปิดได้เฉพาะเจ้าของเคส
 class LessonStore:
     """เก็บเจ้าของ บทเรียน และรายละเอียดใน RAM อายุ 15 นาที สูงสุด 1,000 เคส."""
     # ponytail: RAM process เดียวสำหรับเดโม; ใช้ที่เก็บร่วมเมื่อมีหลาย worker/ต้องเก็บข้าม restart
@@ -118,6 +123,7 @@ class LessonStore:
         while self._cases and next(iter(self._cases.values()))[0] <= now:
             self._cases.popitem(last=False)
 
+    # add: เพิ่มบทเรียนของเจ้าของ คืน case_id
     def add(self, owner: str, lesson: str, *, detail: dict | None = None,
             case_id: str | None = None) -> str | None:
         """case_id: ใช้รหัสเดียวกับแถวใน detection_logs ถ้ามี (ไม่ส่ง = สุ่มใหม่)."""

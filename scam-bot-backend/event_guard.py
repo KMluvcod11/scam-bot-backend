@@ -4,6 +4,7 @@ from threading import Lock
 from time import monotonic
 
 
+# EventGuard: กัน event ซ้ำ: จำ webhook_event_id ที่ทำแล้วไว้ 24 ชม.
 class EventGuard:
     """จำงานที่กำลังทำ และ ID ที่ทำจบไม่เกิน 24 ชั่วโมง รวมสูงสุด 10,000 รายการ."""
     # __init__: ตรวจอายุและความจุที่เป็นบวก แล้วเตรียมชุดงานกำลังทำ งานเสร็จ และ lock สำหรับกัน event ซ้ำ
@@ -17,6 +18,7 @@ class EventGuard:
         self._completed = OrderedDict()
         self._lock = Lock()
 
+    # claim_batch: จอง event ID ทั้งชุด คืน new / duplicate ต่อ event หรือ None ถ้าที่เก็บเต็ม
     def claim_batch(self, event_ids: list[str]) -> list[str] | None:
         """จองทั้งชุดพร้อมกัน; ถ้าที่ไม่พอจะไม่จองบางส่วนแล้วตอบ 503."""
         with self._lock:
@@ -42,11 +44,13 @@ class EventGuard:
             self._active.update(new_ids)
             return claims
 
+    # claim: จอง event เดียว (เรียก claim_batch)
     def claim(self, event_id: str) -> str:
         """ทางเรียกเดิมสำหรับหนึ่ง event; คืน new, duplicate หรือ full."""
         claims = self.claim_batch([event_id])
         return claims[0] if claims is not None else "full"
 
+    # finish: ทำ event เสร็จแล้ว ย้ายจากกำลังทำไปเป็นทำแล้ว
     def finish(self, event_id: str) -> None:
         """จำว่าเคยพยายามทำแล้ว แม้ตรวจ/ส่งไม่สำเร็จ ตามนโยบายไม่ retry อัตโนมัติ."""
         with self._lock:

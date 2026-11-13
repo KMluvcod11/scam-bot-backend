@@ -40,6 +40,7 @@ IMAGE_TEXT_PROMPT = """
 ให้ readable เป็น false และ text เป็นข้อความว่าง ""
 """
 
+# extract_text_from_image: OCR: ส่งรูปให้ Gemini อ่านข้อความ คืน ok / uncertain / error
 def extract_text_from_image(image_bytes, mime_type: str) -> dict:
     """อ่านข้อความในรูป; คืนสถานะ ok, uncertain หรือ error พร้อมข้อความ."""
     try:
@@ -95,6 +96,7 @@ def extract_text_from_image(image_bytes, mime_type: str) -> dict:
         print(f"[OCR ERROR] type={type(error).__name__}")
         return {"status": "error", "text": ""}
 
+# DetectionUnavailable: error ที่บอกว่าขั้นไหนตรวจไม่ได้ (embedding / vector_db)
 class DetectionUnavailable(Exception):
     """ระบุขั้นตอนที่ตรวจไม่ได้ โดยไม่เก็บข้อความ error ดิบจากบริการภายนอก."""
     # __init__: เก็บชื่อขั้นตอนและชนิดข้อผิดพลาดสำหรับแจ้งว่าตรวจไม่ได้ โดยไม่เก็บ error ดิบ

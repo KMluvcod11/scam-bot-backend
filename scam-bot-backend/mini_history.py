@@ -12,6 +12,7 @@ VISIBLE_STATUSES = ["risk_found", "uncertain", "no_risk_found"]
 COLUMNS = "id,message_text,detection_status,reason,received_at"
 
 
+# HistoryUnavailable: error เมื่ออ่าน/ลบประวัติจาก Supabase ไม่ได้
 class HistoryUnavailable(Exception):  # noqa: N818 — ชื่อสื่อความหมายตามที่ mini_api ใช้
     """Supabase ขัดข้อง; ไม่เก็บข้อความ error ดิบเพราะอาจมีข้อมูลระบบ."""
 
@@ -23,6 +24,7 @@ def get_client():
     return _history_client()
 
 
+# _run: รัน query Supabase แล้วคืนข้อมูล
 def _run(build_query):
     """รัน query แล้วคืน data; ทุก error กลายเป็น HistoryUnavailable."""
     try:
@@ -31,6 +33,7 @@ def _run(build_query):
         raise HistoryUnavailable() from None
 
 
+# _owner_rows: query พื้นฐาน: ประวัติของผู้ใช้คนนี้ในแชทส่วนตัว
 def _owner_rows(client, owner):
     """เงื่อนไขร่วม: แถวของเจ้าของ เฉพาะแชตส่วนตัว และ 3 สถานะที่แสดงได้."""
     return (client.table(TABLE).select(COLUMNS)

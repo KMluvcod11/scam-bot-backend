@@ -60,6 +60,7 @@ _KNOWN_THREAT_TYPES = frozenset(
 )
 
 
+# decode_safe_browsing_response: แปลงผล protobuf จาก Google Safe Browsing เป็น dict
 def decode_safe_browsing_response(data: bytes) -> dict:
     """รับ bytes จาก Google; คืน dict หรือยก ValueError เมื่ออ่านผลไม่ได้."""
     if not isinstance(data, bytes):

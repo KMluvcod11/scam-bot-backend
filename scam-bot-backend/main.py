@@ -46,6 +46,7 @@ app.add_middleware(CORSMiddleware, allow_origins=mini_web_origins(),
 app.include_router(create_mini_router(mini_history))
 
 
+# parse_webhook: ตรวจลายเซ็น LINE และรูปแบบ JSON แล้วแปลงเป็น event
 def parse_webhook(body: bytes, signature: str | None):
     """ตรวจลายเซ็นจาก body เดิมก่อนอ่าน JSON แล้วตรวจรูปแบบที่บอทต้องใช้."""
     if not signature or not signature.strip():
@@ -204,6 +205,7 @@ async def line_webhook(request: Request, x_line_signature: str = Header(None)):
     return JSONResponse(content="OK", status_code=200, background=background)
 
 
+# process_accepted_events: ทำ event ที่รับไว้ทีละตัวเบื้องหลัง แยกตามชนิด
 async def process_accepted_events(accepted, request_id):
     """ทำงานหลังส่ง HTTP 200; จบทีละ event และปล่อย ID แม้ขั้นใดเกิดข้อผิดพลาด."""
     started = monotonic()
@@ -224,6 +226,7 @@ async def process_accepted_events(accepted, request_id):
     print(f"[WEBHOOK] request={request_id} processed={len(accepted)} processing_elapsed={monotonic() - started:.2f}s")
 
 
+# process_text_event: ตั้ง trace id ให้ข้อความนี้ แล้วเรียก _process_text_event
 async def process_text_event(event: MessageEvent | PostbackEvent):
     """สร้างรหัสสุ่มเฉพาะงาน ไม่ใช้ LINE user ID หรือ token เป็นรหัส log."""
     token = trace_id.set(uuid4().hex[:8])
@@ -243,6 +246,7 @@ async def process_text_event(event: MessageEvent | PostbackEvent):
         trace_id.reset(token)
 
 
+# _process_text_event: แยกเส้นทาง: ปุ่ม / รูปภาพ / แชทส่วนตัว / กลุ่ม แล้วตรวจและตอบ
 async def _process_text_event(event: MessageEvent | PostbackEvent):
     """วิเคราะห์และตอบหนึ่ง event; แยกไว้เพื่อให้ Webhook จัดการการกันซ้ำได้ชัดเจน."""
     if isinstance(event, PostbackEvent):
@@ -463,6 +467,7 @@ PRIVATE_ERROR = (
 )
 
 
+# private_reply: สร้างข้อความตอบแชทส่วนตัวตามสถานะผลตรวจ
 def private_reply(result: dict, text: str) -> str:
     """สร้างคำตอบจากสถานะชัดเจน ไม่แปลง False หรือ fallback เป็นคำรับรอง."""
     status = result.get("status")
@@ -492,6 +497,7 @@ def private_reply(result: dict, text: str) -> str:
 
 
 
+# image_reply: สร้างข้อความตอบผลตรวจรูปภาพ
 def image_reply(result: dict) -> str:
     """สร้างคำตอบสำหรับข้อความในรูป โดยยังไม่ส่ง LINE."""
     status = result.get("status")
@@ -526,11 +532,13 @@ def image_reply(result: dict) -> str:
 CASE_NAMESPACE = uuid.UUID("6f1d3c2a-8b4e-4f7a-9c1d-2e3f4a5b6c7d")
 
 
+# case_id_for: สร้างรหัสเคสจาก event ID (event เดิมได้รหัสเดิมเสมอ)
 def case_id_for(webhook_event_id: str) -> str:
     """รหัสเคสคงที่ต่อ event: LINE ส่ง event ซ้ำหลังรีสตาร์ตก็ได้รหัสเดิม ตรงกับแถวที่บันทึกไว้แล้ว."""
     return uuid.uuid5(CASE_NAMESPACE, webhook_event_id).hex
 
 
+# open_result_case: เก็บเคสให้ Mini App และสร้างการ์ดผลตรวจ (แชทส่วนตัว)
 def open_result_case(event, text: str, result: dict, *, source: str):
     """เก็บเคสให้ Mini App แล้วสร้างการ์ดผลตรวจ คืน (case_id, card, has_lesson).
 
@@ -561,6 +569,7 @@ def open_result_case(event, text: str, result: dict, *, source: str):
         return None, None, False
 
 
+# group_card: สร้างการ์ดเตือนสำหรับกลุ่ม (ไม่มีปุ่มส่วนตัว)
 def group_card(result: dict, text: str, *, source: str) -> dict | None:
     """การ์ดเตือนในกลุ่ม: ไม่มีปุ่มรายละเอียด ไม่เปิดเคสส่วนตัว; สร้างไม่ได้ก็ส่งข้อความธรรมดา."""
     try:
@@ -570,6 +579,7 @@ def group_card(result: dict, text: str, *, source: str) -> dict | None:
         return None
 
 
+# process_private_event: แชทส่วนตัว: ตรวจข้อความ ตอบกลับพร้อมการ์ด แล้วบันทึกประวัติ
 async def process_private_event(event: MessageEvent):
     """ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม."""
     case_id = None
@@ -609,6 +619,7 @@ async def process_private_event(event: MessageEvent):
                                 warning_attempted=True, warning_sent=sent, **options)
 
 
+# process_menu_check: ปุ่ม 'เริ่มตรวจ' ใน Rich Menu: ส่งวิธีใช้งาน
 async def process_menu_check(event: PostbackEvent):
     """ปุ่มเริ่มตรวจแสดงวิธีส่งข้อความ ไม่สร้างผลตรวจหรือเรียก AI."""
     instructions = (
@@ -627,6 +638,7 @@ async def process_menu_check(event: PostbackEvent):
         print(f"[SEND ERROR] stage=rich_menu type={type(error).__name__}")
 
 
+# process_learning_event: ปุ่ม 'เรียนรู้จากเคสนี้': ส่งบทเรียนของเคส (เฉพาะเจ้าของ)
 async def process_learning_event(event: PostbackEvent):
     """รหัสเคสไม่ใช่สิทธิ์: ต้องตรวจ LINE user ID จาก webhook ที่ผ่านลายเซ็นด้วย."""
     match = re.fullmatch(r"learn:([0-9a-f]{32})", event.postback.data)

@@ -18,6 +18,7 @@ TOO_LONG_NOTICE = (
 )
 
 
+# text_messages: แบ่งข้อความยาวเป็นหลายข้อความตามขีดจำกัดของ LINE
 def text_messages(text: str, *, limit: int = REPLY_MESSAGE_LIMIT) -> list[dict] | None:
     """แบ่งตรงช่องว่างเท่านั้น นับ UTF-16 ตาม LINE; คืน None ถ้าส่งครบไม่ได้."""
     chunks, current, used = [], [], 0
@@ -37,6 +38,7 @@ def text_messages(text: str, *, limit: int = REPLY_MESSAGE_LIMIT) -> list[dict] 
 # จำกัดขนาดดาวน์โหลดของโปรเจกต์ไว้ที่ 5 MiB
 MAX_IMAGE_BYTES = 5 * 1024 * 1024  # 5 MB
 
+# get_image_content: ดาวน์โหลดรูปที่ผู้ใช้ส่งจาก LINE
 def get_image_content(message_id: str) -> tuple[bytes, str] | None:
     """ดาวน์โหลดรูปไว้ในหน่วยความจำ; คืนข้อมูลรูปกับชนิดไฟล์ หรือ None."""
     try:
@@ -87,6 +89,7 @@ def get_image_content(message_id: str) -> tuple[bytes, str] | None:
 
 
 
+# get_group_member_count: ถาม LINE ว่ากลุ่มมีสมาชิกกี่คน
 def get_group_member_count(group_id: str) -> int | None:
     """ดึงจำนวนสมาชิกที่ไม่รวมบอต; ถ้าดึงไม่ได้คืน None เพื่อรักษาค่าเดิม."""
     try:
@@ -108,6 +111,7 @@ def get_group_member_count(group_id: str) -> int | None:
         return None
 
 
+# get_group_name: ถาม LINE ชื่อกลุ่ม
 def get_group_name(group_id: str) -> str | None:
     """อ่านชื่อกลุ่มจาก LINE; ล้มเหลวคืน None ไม่พิมพ์ token/ชื่อกลุ่มใน log."""
     try:
@@ -126,6 +130,7 @@ def get_group_name(group_id: str) -> str | None:
         return None
 
 
+# get_sender_display_name: ถาม LINE ชื่อผู้ส่งข้อความ
 def get_sender_display_name(kind: str, source_id: str, user_id: str) -> str | None:
     """อ่านชื่อผู้ส่งจาก LINE; คืน None เมื่อ LINE ไม่อนุญาตหรืออ่านไม่สำเร็จ."""
     if kind == "group":

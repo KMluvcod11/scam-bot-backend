@@ -5,6 +5,7 @@
 import re
 
 
+# redact_phone: ปิดเบอร์มือถือไทยที่มีคำว่า เบอร์/โทร นำหน้า
 def redact_phone(text: str | None) -> str | None:
     """ปกปิดเฉพาะเบอร์มือถือไทยที่มีคำกำกับ เพื่อลดการจับเลขทั่วไปผิด."""
     if text is None:

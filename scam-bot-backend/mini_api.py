@@ -80,6 +80,7 @@ NOT_FOUND_MESSAGE = "เปิดผลตรวจนี้ไม่ได้ �
 UNAVAILABLE_MESSAGE = "ระบบประวัติขัดข้อง กรุณาลองใหม่ภายหลัง"
 
 
+# create_mini_router: สร้าง API /api/mini ให้ Mini App: ดูประวัติ ลบประวัติ ดูเคส
 def create_mini_router(history) -> APIRouter:
     """history: โมดูล mini_history หรือของจำลองที่มี list_cases/get_case/delete_all."""
     router = APIRouter(prefix="/api/mini", tags=["Mini App"])
