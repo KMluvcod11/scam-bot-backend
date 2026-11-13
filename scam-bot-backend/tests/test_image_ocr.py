@@ -84,6 +84,13 @@ class ImageOCRTests(unittest.TestCase):
 
         self.generate.assert_not_called()
 
+    # test_ocr_error_log_uses_standard_type_field: log ต้องเป็น " type=" แบบเดียวกับ log อื่น จึงค้น/แจ้งเตือนได้
+    def test_ocr_error_log_uses_standard_type_field(self):
+        self.detector.extract_text_from_image(b"", "image/jpeg")
+        logged = " ".join(str(value) for call in self.logs.call_args_list for value in call.args)
+        self.assertIn("[OCR ERROR] type=ValueError", logged)
+        self.assertNotIn("1type=", logged)
+
     # test_unsupported_mime_types_do_not_call_gemini: ทดสอบ MIME ที่ไม่รองรับไม่เรียก Gemini
     def test_unsupported_mime_types_do_not_call_gemini(self):
         for mime_type in (None, "", "text/html", "image/gif"):

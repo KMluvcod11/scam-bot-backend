@@ -366,6 +366,8 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                     if source == "user":
                         self.assertEqual(saved.kwargs["image_text"], text)
                     self.assertNotIn("SECRET", str(logs.call_args_list))
+                    # reply_to_line จับเวลา line_reply เองแล้ว main.py ต้องไม่ห่อจับเวลาซ้ำ (ที่นี่ reply_to_line เป็นตัวจำลอง)
+                    self.assertNotIn("stage=line_reply", str(logs.call_args_list))
 
     # test_private_image_returns_each_analysis_status: ทดสอบรูปส่วนตัวส่งผลแต่ละสถานะจากการวิเคราะห์ไปตอบได้ตรงกัน
     async def test_private_image_returns_each_analysis_status(self):

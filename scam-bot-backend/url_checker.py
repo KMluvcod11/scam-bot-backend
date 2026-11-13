@@ -5,6 +5,8 @@ from copy import deepcopy
 from threading import Lock
 from time import monotonic
 from urllib.parse import urlsplit, urlunsplit
+# ใช้ log ที่เติม [trace=...] เหมือนโมดูลอื่น เพื่อรู้ว่า log เป็นของข้อความไหน
+from bot_observability import log as print
 from config import SAFE_BROWSING_API_KEY
 from safe_browsing_proto import decode_safe_browsing_response
 

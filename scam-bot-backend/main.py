@@ -355,9 +355,8 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
             elif ocr_text:
                 card = group_card(image_result, ocr_text, source="image")
             try:
+                # reply_to_line จับเวลา line_reply เองแล้ว จึงเรียกตรงเหมือนฝั่งข้อความ ไม่ห่อจับเวลาซ้ำ
                 sent = await run_in_threadpool(
-                    timed_call,
-                    "line_reply",
                     reply_to_line,
                     event.reply_token,
                     reply_msg,

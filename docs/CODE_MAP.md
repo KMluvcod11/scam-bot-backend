@@ -190,14 +190,14 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 | [`process_accepted_events`](../scam-bot-backend/main.py#L207) | ทำงานหลังส่ง HTTP 200; จบทีละ event และปล่อย ID แม้ขั้นใดเกิดข้อผิดพลาด. |
 | [`process_text_event`](../scam-bot-backend/main.py#L227) | สร้างรหัสสุ่มเฉพาะงาน ไม่ใช้ LINE user ID หรือ token เป็นรหัส log. |
 | [`_process_text_event`](../scam-bot-backend/main.py#L246) | วิเคราะห์และตอบหนึ่ง event; แยกไว้เพื่อให้ Webhook จัดการการกันซ้ำได้ชัดเจน. |
-| [`private_reply`](../scam-bot-backend/main.py#L467) | สร้างคำตอบจากสถานะชัดเจน ไม่แปลง False หรือ fallback เป็นคำรับรอง. |
-| [`image_reply`](../scam-bot-backend/main.py#L496) | สร้างคำตอบสำหรับข้อความในรูป โดยยังไม่ส่ง LINE. |
-| [`case_id_for`](../scam-bot-backend/main.py#L530) | รหัสเคสคงที่ต่อ event: LINE ส่ง event ซ้ำหลังรีสตาร์ตก็ได้รหัสเดิม ตรงกับแถวที่บันทึกไว้แล้ว. |
-| [`open_result_case`](../scam-bot-backend/main.py#L535) | เก็บเคสให้ Mini App แล้วสร้างการ์ดผลตรวจ คืน (case_id, card, has_lesson). |
-| [`group_card`](../scam-bot-backend/main.py#L565) | การ์ดเตือนในกลุ่ม: ไม่มีปุ่มรายละเอียด ไม่เปิดเคสส่วนตัว; สร้างไม่ได้ก็ส่งข้อความธรรมดา. |
-| [`process_private_event`](../scam-bot-backend/main.py#L574) | ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม. |
-| [`process_menu_check`](../scam-bot-backend/main.py#L613) | ปุ่มเริ่มตรวจแสดงวิธีส่งข้อความ ไม่สร้างผลตรวจหรือเรียก AI. |
-| [`process_learning_event`](../scam-bot-backend/main.py#L631) | รหัสเคสไม่ใช่สิทธิ์: ต้องตรวจ LINE user ID จาก webhook ที่ผ่านลายเซ็นด้วย. |
+| [`private_reply`](../scam-bot-backend/main.py#L466) | สร้างคำตอบจากสถานะชัดเจน ไม่แปลง False หรือ fallback เป็นคำรับรอง. |
+| [`image_reply`](../scam-bot-backend/main.py#L495) | สร้างคำตอบสำหรับข้อความในรูป โดยยังไม่ส่ง LINE. |
+| [`case_id_for`](../scam-bot-backend/main.py#L529) | รหัสเคสคงที่ต่อ event: LINE ส่ง event ซ้ำหลังรีสตาร์ตก็ได้รหัสเดิม ตรงกับแถวที่บันทึกไว้แล้ว. |
+| [`open_result_case`](../scam-bot-backend/main.py#L534) | เก็บเคสให้ Mini App แล้วสร้างการ์ดผลตรวจ คืน (case_id, card, has_lesson). |
+| [`group_card`](../scam-bot-backend/main.py#L564) | การ์ดเตือนในกลุ่ม: ไม่มีปุ่มรายละเอียด ไม่เปิดเคสส่วนตัว; สร้างไม่ได้ก็ส่งข้อความธรรมดา. |
+| [`process_private_event`](../scam-bot-backend/main.py#L573) | ตอบส่วนตัวและเพิ่มปุ่มเฉพาะผลที่มีบทเรียน โดยไม่เปลี่ยนผลตรวจเดิม. |
+| [`process_menu_check`](../scam-bot-backend/main.py#L612) | ปุ่มเริ่มตรวจแสดงวิธีส่งข้อความ ไม่สร้างผลตรวจหรือเรียก AI. |
+| [`process_learning_event`](../scam-bot-backend/main.py#L630) | รหัสเคสไม่ใช่สิทธิ์: ต้องตรวจ LINE user ID จาก webhook ที่ผ่านลายเซ็นด้วย. |
 
 ### scam-bot-backend/messaging.py
 
@@ -286,11 +286,11 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`extract_urls`](../scam-bot-backend/url_checker.py#L45) | ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม. |
-| [`validate_url`](../scam-bot-backend/url_checker.py#L61) | ตรวจ URL แบบ HTTP/HTTPS ที่ไม่มี credentials หรืออักขระผิดกฎ แล้วคืน URL ที่ตัด fragment; ผิดยก ValueError |
-| [`parse_safe_browsing_response`](../scam-bot-backend/url_checker.py#L106) | แปลงผลจาก Google เป็นผลตรวจและอายุ cache หน่วยวินาที. |
-| [`_request_safe_browsing`](../scam-bot-backend/url_checker.py#L155) | เรียก Google แล้วคืนผลตรวจพร้อมอายุ cache. |
-| [`check_url`](../scam-bot-backend/url_checker.py#L180) | ตรวจหนึ่ง URL; คืน matched, not_found หรือ error. |
+| [`extract_urls`](../scam-bot-backend/url_checker.py#L47) | ดึงลิงก์ HTTP/HTTPS ที่ไม่ซ้ำ โดยรักษาลำดับเดิม. |
+| [`validate_url`](../scam-bot-backend/url_checker.py#L63) | ตรวจ URL แบบ HTTP/HTTPS ที่ไม่มี credentials หรืออักขระผิดกฎ แล้วคืน URL ที่ตัด fragment; ผิดยก ValueError |
+| [`parse_safe_browsing_response`](../scam-bot-backend/url_checker.py#L108) | แปลงผลจาก Google เป็นผลตรวจและอายุ cache หน่วยวินาที. |
+| [`_request_safe_browsing`](../scam-bot-backend/url_checker.py#L157) | เรียก Google แล้วคืนผลตรวจพร้อมอายุ cache. |
+| [`check_url`](../scam-bot-backend/url_checker.py#L182) | ตรวจหนึ่ง URL; คืน matched, not_found หรือ error. |
 
 ## ชุดทดสอบและวิธีตรวจ
 

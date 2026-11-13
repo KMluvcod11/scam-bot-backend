@@ -100,6 +100,14 @@ class URLValidationTests(unittest.TestCase):
             ],
         )
 
+    # test_url_error_log_has_trace_prefix: log ต้องมี [trace=...] เหมือนโมดูลอื่น เพื่อรู้ว่าเป็นของข้อความไหน
+    def test_url_error_log_has_trace_prefix(self):
+        with patch("builtins.print") as output:
+            self.assertEqual(self.checker.check_url("not a url")["status"], "error")
+        first = output.call_args_list[-1].args
+        self.assertTrue(str(first[0]).startswith("[trace="), first)
+        self.assertIn("[URL ERROR] type=ValueError", " ".join(map(str, first)))
+
     # test_extract_rejects_nonstring_input: ทดสอบ extract_urls ปฏิเสธ input ที่ไม่ใช่ข้อความ
     def test_extract_rejects_nonstring_input(self):
         for value in (None, False, 123, [], {}, b"https://example.com"):

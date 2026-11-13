@@ -92,7 +92,7 @@ def extract_text_from_image(image_bytes, mime_type: str) -> dict:
         return {"status": "ok", "text": text.strip()}
 
     except Exception as error:
-        print(f"[OCR ERROR] 1type={type(error).__name__}")
+        print(f"[OCR ERROR] type={type(error).__name__}")
         return {"status": "error", "text": ""}
 
 class DetectionUnavailable(Exception):
