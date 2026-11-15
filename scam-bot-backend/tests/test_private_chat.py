@@ -253,6 +253,20 @@ class PrivateWebhookTests(unittest.IsolatedAsyncioTestCase):
                          f"[MESSAGE] source=user chars={len(text)}")
         self.assertNotIn('ข้อความทดสอบ', str(logs.call_args_list))
 
+    # test_greeting_sends_help_card_with_text_fallback: คำทักทายได้การ์ดวิธีใช้ โดยยังส่งข้อความเดิมไว้เป็นข้อความสำรอง
+    async def test_greeting_sends_help_card_with_text_fallback(self):
+        self.module.analyze_message.return_value = result("conversation")
+        await self.post_events([private_event("สวัสดี")])
+        reply = self.module.reply_to_line.call_args
+        self.assertEqual(reply.args[1], self.module.PRIVATE_HELP)
+        card = reply.kwargs["card"]
+        self.assertEqual(card["type"], "flex")
+        dumped = str(card)
+        for words in ("สวัสดีครับ", "ส่งอะไรได้บ้าง", "อย่าส่ง OTP หรือรหัสผ่าน", "ยังไม่ได้เปิดตรวจเว็บไซต์ปลายทาง"):
+            self.assertIn(words, dumped)
+        self.assertNotIn("footer", card["contents"])
+        self.assertNotIn("continuation", reply.kwargs)
+
     # test_private_replies_for_each_result: ทดสอบคำตอบส่วนตัวตรงสถานะที่วิเคราะห์ได้แต่ละแบบ
     async def test_private_replies_for_each_result(self):
         for number, (status, expected) in enumerate((

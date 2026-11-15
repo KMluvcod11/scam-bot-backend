@@ -143,6 +143,41 @@ def card_style(result: dict) -> dict | None:
 
 
 # build_result_card: สร้างการ์ด Flex ผลตรวจ 1 ใบ
+# build_help_card: การ์ดทักทาย/วิธีใช้ในแชตส่วนตัว เนื้อหาเดียวกับ main.PRIVATE_HELP ที่เป็นข้อความสำรอง
+def build_help_card() -> dict:
+    greeting = [{"type": "text", "text": "สวัสดีครับ", "weight": "bold", "size": "xl",
+                 "color": TEXT_STRONG, "flex": 1, "gravity": "center"}]
+    image = mascot_url("calm")
+    if image:
+        greeting.insert(0, {"type": "image", "url": image, "size": "72px",
+                            "aspectRatio": "1:1", "aspectMode": "fit", "flex": 0})
+    body = [
+        {"type": "box", "layout": "horizontal", "spacing": "md", "alignItems": "center", "contents": greeting},
+        {"type": "text", "text": "ผมช่วยประเมินข้อความที่อาจเสี่ยงต่อการหลอกลวง ส่งข้อความที่สงสัยมาได้เลยครับ",
+         "size": "md", "color": TEXT_BODY, "wrap": True},
+        section_title("ส่งอะไรได้บ้าง"),
+        {"type": "box", "layout": "vertical", "spacing": "xs", "contents": [
+            bullet("ข้อความที่สงสัย คัดลอกมาวางได้เลย"),
+            bullet("รูปแคปหน้าจอแชตหรือ SMS")]},
+        {"type": "box", "layout": "vertical", "spacing": "xs", "backgroundColor": "#FFF4DE",
+         "cornerRadius": "12px", "paddingAll": "12px", "contents": [
+             {"type": "text", "text": "คำแนะนำ", "weight": "bold", "size": "md", "color": "#92600A"},
+             {"type": "text", "text": "ปิดบังข้อมูลส่วนตัว และอย่าส่ง OTP หรือรหัสผ่าน", "size": "sm",
+              "color": TEXT_BODY, "wrap": True},
+             {"type": "text", "text": "หากส่งลิงก์ ผมยังไม่ได้เปิดตรวจเว็บไซต์ปลายทาง", "size": "sm",
+              "color": TEXT_BODY, "wrap": True}]},
+    ]
+    bubble = {
+        "type": "bubble",
+        "header": {"type": "box", "layout": "vertical", "backgroundColor": "#BDF3D8", "paddingAll": "16px",
+                   "contents": [{"type": "text", "text": "Eh?Bot ผู้ช่วยเช็กข้อความ", "weight": "bold",
+                                 "size": "md", "color": TEXT_STRONG, "wrap": True, "align": "center"}]},
+        "body": {"type": "box", "layout": "vertical", "spacing": "lg", "paddingAll": "20px",
+                 "backgroundColor": "#FFFFFF", "contents": body},
+    }
+    return {"type": "flex", "altText": "สวัสดีครับ ส่งข้อความที่สงสัยมาให้ Eh?Bot ช่วยดูได้เลย", "contents": bubble}
+
+
 def build_result_card(result: dict, *, source: str, quote: str, case_id: str | None,
                       allow_postback: bool = False, group: bool = False) -> dict | None:
     """รับผลตรวจ คืน Flex Message หนึ่งข้อความ หรือ None ถ้าสถานะนี้ไม่ใช้การ์ด.

@@ -120,7 +120,10 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         for number, status in enumerate(("conversation", "error", "fallback"), 1):
             self.module.analyze_message.return_value = result(status)
             await self.post_events([private_event(number=number)])
-            self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})
+            kwargs = self.module.reply_to_line.call_args.kwargs
+            # conversation ได้การ์ดวิธีใช้ (ไม่มีปุ่ม) ส่วนสถานะอื่นไม่มีอะไรแนบ
+            self.assertEqual(set(kwargs), {"card"} if status == "conversation" else set())
+            self.assertNotIn("footer", kwargs.get("card", {}).get("contents", {}))
         self.module.analyze_message.return_value = {**result("risk_found"), "is_scam": False}
         await self.post_events([private_event(number=5)])
         self.assertEqual(self.module.reply_to_line.call_args.kwargs, {})

@@ -31,7 +31,7 @@ from detector import analyze_message, extract_text_from_image
 from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
-from flex_cards import build_result_card, build_result_continuation
+from flex_cards import build_help_card, build_result_card, build_result_continuation
 import mini_history
 from mini_api import create_mini_router, mini_web_origins
 from detection_history import save_detection, save_group_join, save_group_leave, save_group_members
@@ -457,7 +457,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
 
 
 PRIVATE_HELP = (
-    "สวัสดีครับ 👋 ผมช่วยประเมินข้อความที่อาจเสี่ยงต่อการหลอกลวง\n"
+    "สวัสดีครับ ผมช่วยประเมินข้อความที่อาจเสี่ยงต่อการหลอกลวง\n"
     "ส่งข้อความที่สงสัยมาได้เลยครับ หากส่งลิงก์ ผมยังไม่ได้เปิดตรวจเว็บไซต์ปลายทาง\n"
     "กรุณาปิดบังข้อมูลส่วนตัว และอย่าส่ง OTP หรือรหัสผ่าน"
 )
@@ -608,6 +608,8 @@ async def process_private_event(event: MessageEvent):
             options["card"] = card
             options["continuation"] = build_result_continuation(
                 result, source="text", quote=event.message.text)
+        elif reply_msg == PRIVATE_HELP:
+            options["card"] = build_help_card()
         sent = await run_in_threadpool(reply_to_line, event.reply_token, reply_msg, **options)
         print("[ACTION] LINE API ยอมรับคำตอบส่วนตัวแล้ว" if sent else "[ACTION] ส่งคำตอบส่วนตัวไม่สำเร็จ")
     except Exception as error:
