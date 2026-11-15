@@ -587,7 +587,7 @@ async def process_private_event(event: MessageEvent):
     has_lesson = False
     result = None
     if not isinstance(event.message, TextMessageContent):
-        reply_msg = "ตอนนี้ยังตรวจรูปภาพ สติกเกอร์ เสียง วิดีโอ หรือไฟล์ไม่ได้ครับ กรุณาคัดลอกข้อความมาส่งแทน"
+        reply_msg = "ตอนนี้ยังตรวจสติกเกอร์ เสียง วิดีโอ หรือไฟล์ไม่ได้ครับ กรุณาส่งเป็นข้อความหรือรูปภาพแทน"
     else:
         print(f"[MESSAGE] source=user chars={len(event.message.text)}")
         try:
