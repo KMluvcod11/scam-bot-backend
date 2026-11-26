@@ -91,7 +91,14 @@ class ResultCardTests(unittest.TestCase):
                                 self.assertEqual(button["action"], {"type": "uri", "label": "ดูรายละเอียด",
                                     "uri": f"https://liff.line.me/1234567890-TestApp?case={CASE_ID}"})
 
-    # test_group_never_gets_button_even_with_case_id_or_postback: ทดสอบการ์ดกลุ่มไม่มีปุ่ม แม้ส่ง case_id และอนุญาต postback
+    # test_warning_icon_is_vertically_centered_with_title: ไอคอนเตือนกับหัวข้อจัดกึ่งกลางแนวตั้งเสมอกัน
+    def test_warning_icon_is_vertically_centered_with_title(self):
+        with patch.dict(os.environ, LIVE_ENV):
+            heading = flex_cards.note_heading(flex_cards.STATUS_STYLES["risk_found"])
+        self.assertEqual(heading["alignItems"], "center")
+        self.assertEqual([item["type"] for item in heading["contents"]], ["image", "text"])
+
+    # test_group_never_gets_button_even_with_case_id_or_postback:ทดสอบการ์ดกลุ่มไม่มีปุ่ม แม้ส่ง case_id และอนุญาต postback
     def test_group_never_gets_button_even_with_case_id_or_postback(self):
         with patch.dict(os.environ, LIVE_ENV):
             card = self.card(group=True, allow_postback=True)

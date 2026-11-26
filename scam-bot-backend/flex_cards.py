@@ -146,8 +146,11 @@ def note_heading(style: dict) -> dict:
     icon = asset_url(style["note_icon"]) if style.get("note_icon") else None
     if not icon:
         return text
-    return {"type": "box", "layout": "baseline", "spacing": "sm", "contents": [
-        {"type": "icon", "url": icon, "size": "lg"}, text]}
+    # layout baseline วางไอคอนลอยสูงกว่าตัวหนังสือ จึงใช้ horizontal จัดกึ่งกลางแนวตั้ง
+    image = {"type": "image", "url": icon, "size": "20px", "aspectRatio": "1:1", "flex": 0}
+    text.update({"flex": 1, "gravity": "center"})
+    return {"type": "box", "layout": "horizontal", "spacing": "sm", "alignItems": "center",
+            "contents": [image, text]}
 
 
 # detail_action: สร้างปุ่ม 'ดูรายละเอียด' ในการ์ด (เปิด Mini App หรือ postback)
