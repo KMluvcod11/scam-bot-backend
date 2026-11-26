@@ -4,6 +4,7 @@
 """
 import re
 
+from learning import LESSON_TOPICS
 from mini_api import get_mini_case_url, mini_web_origins
 from privacy import redact_phone
 
@@ -31,8 +32,9 @@ DISCLAIMER = "เป็นผลประเมินจากข้อควา
 QUOTE_LIMIT = 150
 REASON_LIMIT = 400
 REASON_ITEMS = 5
-LONG_QUOTE = "ข้อความยาว อ่านฉบับเต็มในข้อความถัดจากการ์ด"
-LONG_REASON = "เหตุผลมีรายละเอียดเพิ่มเติม อ่านฉบับเต็มในข้อความถัดจากการ์ด"
+LONG_QUOTE = "ข้อความยาวเกินพื้นที่การ์ด"
+LONG_REASON = "ยังมีเหตุผลเพิ่มเติมที่ไม่ได้แสดงในการ์ด"
+FULL_TEXT_HINT = "ดูฉบับเต็มได้ที่ปุ่ม “ดูรายละเอียด”"
 
 
 # reason_items: แยกเหตุผลจากผลตรวจเป็นรายการทีละข้อ สำหรับแสดงในการ์ด
@@ -42,16 +44,23 @@ def reason_items(reason) -> list[str]:
         return ["ไม่มีเหตุผลเพิ่มเติมจากผลตรวจ"]
     parts = [part.strip(" -–•\t") for part in re.split(r"[\r\n•]+", reason)]
     parts = [part for part in parts if part] or [reason.strip()]
-    if len(parts) > REASON_ITEMS or sum(map(len, parts)) > REASON_LIMIT:
-        return [LONG_REASON]
-    return parts
+    shown = []
+    used = 0
+    for part in parts[:REASON_ITEMS]:
+        if used + len(part) > REASON_LIMIT:
+            break
+        shown.append(part)
+        used += len(part)
+    if len(shown) < len(parts):
+        shown.append(LONG_REASON)
+    return shown
 
 
 # defang_links: ทำลิงก์ให้กดไม่ได้ https://a.com → hxxps://a[.]com
 def defang_links(text: str) -> str:
     """ทำลิงก์ให้อ่านออกแต่กดไม่ได้ เช่น https://a.com → hxxps://a[.]com.
 
-    ฉบับเต็มส่งเป็นข้อความธรรมดา ซึ่ง LINE เปลี่ยนลิงก์ให้กดได้อัตโนมัติ
+    ข้อความธรรมดาที่บอตส่ง LINE เปลี่ยนลิงก์ให้กดได้อัตโนมัติ
     บอตจึงต้องไม่ส่งลิงก์จากข้อความมิจฉาชีพกลับเข้าแชตในสภาพที่กดได้
     """
     text = re.sub(r"\b(h)tt(ps?)://", r"\1xx\2://", text, flags=re.IGNORECASE)
@@ -59,22 +68,57 @@ def defang_links(text: str) -> str:
     return re.sub(r"(?<=[A-Za-z0-9-])\.(?=[A-Za-z])", "[.]", text)
 
 
-# build_result_continuation: สร้างข้อความผลตรวจฉบับเต็ม ส่งต่อท้ายการ์ด
-def build_result_continuation(result: dict, *, source: str, quote: str) -> str:
-    """คืนผลฉบับเต็มที่ปกปิดเบอร์และทำลิงก์ให้กดไม่ได้แล้ว เมื่อเนื้อหาไม่พอดีการ์ด; ไม่เรียก AI."""
-    style = card_style(result)
-    if style is None:
-        return ""
-    quote = defang_links(redact_phone(str(quote)) or "")
-    reason = result.get("reason")
-    reason = defang_links(redact_phone(reason)) if isinstance(reason, str) else ""
-    reason = reason or "ไม่มีเหตุผลเพิ่มเติมจากผลตรวจ"
-    if len(quote) <= QUOTE_LIMIT and reason_items(reason) != [LONG_REASON]:
-        return ""
-    title = "ผลตรวจข้อความจากรูปภาพ" if source == "image" else "ผลตรวจข้อความ"
-    return (f"{title} — ฉบับเต็ม\n{style['title']}\n\nข้อความที่พบ\n{quote}"
-            f"\n\nเหตุผล\n{reason}\n\n{style['note_title']}\n{style['advice']}"
-            f"\n\n{DISCLAIMER}")
+# join_words: ต่อคำตามตำแหน่งที่เลือก ใส่ … ตรงช่วงที่ข้ามไป
+def join_words(words: list[str], chosen: set[int]) -> str:
+    pieces = []
+    previous = -1
+    for index in sorted(chosen):
+        if index != previous + 1:
+            pieces.append("…")
+        pieces.append(words[index])
+        previous = index
+    if previous != len(words) - 1:
+        pieces.append("…")
+    return " ".join(pieces)
+
+
+# important_text: เลือกช่วงสำคัญของข้อความยาวมาแสดงในการ์ด
+def important_text(quote: str) -> str:
+    """รับข้อความที่ปกปิดเบอร์แล้ว คืนช่วงที่มีคำค้นและช่วงข้างเคียง ยาวไม่เกิน QUOTE_LIMIT; ไม่เรียก AI.
+
+    แบ่งตรงช่องว่างเท่านั้นเพื่อไม่ตัดกลางคำไทย; ไม่พบคำค้นใช้ช่วงต้น; ใส่ไม่ได้เลยคืน ""
+    """
+    words = quote.split()
+    # ค้นคำจากข้อความเดิม เพราะหลัง defang แล้ว https:// จะกลายเป็น hxxps://
+    matches = []
+    for keywords, *_ in LESSON_TOPICS:
+        for index, word in enumerate(words):
+            if any(keyword in word.lower() for keyword in keywords):
+                matches.append(index)
+                break
+    safe_words = [defang_links(word) for word in words]
+    chosen = set()
+
+    # add: เลือกคำเพิ่มเมื่อผลรวมยังไม่เกินพื้นที่; คืน False เมื่อใส่ไม่ได้
+    def add(index: int) -> bool:
+        if len(join_words(safe_words, chosen | {index})) > QUOTE_LIMIT:
+            return False
+        chosen.add(index)
+        return True
+
+    # ใส่คำที่ตรงของทุกหัวข้อก่อน แล้วค่อยเติมบริบทข้างเคียง
+    for index in matches:
+        add(index)
+    if chosen:
+        for index in sorted(chosen):
+            for neighbor in (index - 1, index + 1):
+                if 0 <= neighbor < len(words):
+                    add(neighbor)
+    else:
+        for index in range(len(words)):
+            if not add(index):
+                break
+    return join_words(safe_words, chosen) if chosen else ""
 
 
 # asset_url: สร้าง URL รูปไอคอนจากเว็บ Mini App (ต้องเป็น HTTPS)
@@ -204,17 +248,26 @@ def build_result_card(result: dict, *, source: str, quote: str, case_id: str | N
                             "size": "lg", "color": style["note_color"], "wrap": True,
                             "flex": 1, "gravity": "center"})
 
+    quote_is_long = len(quote) > QUOTE_LIMIT
+    if quote_is_long:
+        quote_title = "ข้อความสำคัญ"
+        quote_text = important_text(quote) or LONG_QUOTE
+    else:
+        quote_title = "ข้อความที่พบ"
+        quote_text = f"“{quote}”"
+    reasons_box = {"type": "box", "layout": "vertical", "spacing": "xs",
+                   "contents": [bullet(item) for item in reasons]}
+
     body = [
         {"type": "box", "layout": "horizontal", "spacing": "md", "alignItems": "center",
          "contents": status_contents},
-        section_title("ข้อความที่พบ"),
+        section_title(quote_title),
         {"type": "box", "layout": "vertical", "backgroundColor": QUOTE_BACKGROUND,
          "cornerRadius": "12px", "paddingAll": "12px", "contents": [
-             {"type": "text", "text": f"“{quote}”" if len(quote) <= QUOTE_LIMIT else LONG_QUOTE, "size": "sm",
+             {"type": "text", "text": quote_text, "size": "sm",
               "color": TEXT_BODY, "wrap": True}]},
         section_title("เหตุผล"),
-        {"type": "box", "layout": "vertical", "spacing": "xs",
-         "contents": [bullet(item) for item in reasons]},
+        reasons_box,
         {"type": "box", "layout": "vertical", "spacing": "xs", "backgroundColor": style["note_background"],
          "cornerRadius": "12px", "paddingAll": "12px", "contents": [
              note_heading(style),
@@ -232,6 +285,11 @@ def build_result_card(result: dict, *, source: str, quote: str, case_id: str | N
                  "backgroundColor": "#FFFFFF", "contents": body},
     }
     action = None if group else detail_action(case_id, allow_postback)
+    # ชี้ไปฉบับเต็มเฉพาะปุ่มที่เปิด Mini App; ปุ่ม postback เปิดแค่บทเรียน
+    shortened = quote_is_long or LONG_REASON in reasons
+    if shortened and action and action["type"] == "uri":
+        hint = {"type": "text", "text": FULL_TEXT_HINT, "size": "xs", "color": TEXT_MUTED, "wrap": True}
+        body.insert(body.index(reasons_box) + 1, hint)
     if action:
         bubble["footer"] = {"type": "box", "layout": "vertical", "paddingAll": "12px",
                             "paddingTop": "0px", "contents": [

@@ -154,26 +154,27 @@ SQL ใน [supabase](../supabase/) เป็นโครงสร้างแ�
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`reason_items`](../scam-bot-backend/flex_cards.py#L38) | แยกเหตุผลเป็นข้อ ๆ ตามขึ้นบรรทัดใหม่หรือ • ที่มากับผลตรวจ ไม่มีก็เป็นข้อเดียว. |
-| [`defang_links`](../scam-bot-backend/flex_cards.py#L49) | ทำลิงก์ให้อ่านออกแต่กดไม่ได้ (`https://a.com` → `hxxps://a[.]com`) เพราะ LINE ทำลิงก์ในข้อความธรรมดาให้กดได้ |
-| [`build_result_continuation`](../scam-bot-backend/flex_cards.py#L60) | คืนผลฉบับเต็มที่ปกปิดเบอร์และทำลิงก์ให้กดไม่ได้ เมื่อข้อความเกิน 150 ตัวหรือเหตุผลยาวเกินการ์ด; สั้นพอคืน "" |
-| [`asset_url`](../scam-bot-backend/flex_cards.py#L77) | รูปอยู่ใน public/ ของเว็บ Mini App; LINE ดึงรูปได้เฉพาะ HTTPS. |
-| [`mascot_url`](../scam-bot-backend/flex_cards.py#L89) | คืน URL รูปมาสคอตตามชื่อท่าทาง หรือ None เมื่อยังไม่มีต้นทาง HTTPS ที่ใช้ได้ |
-| [`note_heading`](../scam-bot-backend/flex_cards.py#L93) | หัวกรอบคำเตือน/คำแนะนำ; มีไอคอนเมื่อโหลดรูปได้ ไม่งั้นเป็นตัวหนังสืออย่างเดียว. |
-| [`detail_action`](../scam-bot-backend/flex_cards.py#L104) | ปุ่มเปิด Mini App ถ้าตั้งค่าครบ; ไม่ครบใช้ postback บทเรียนในแชตแทน (ถ้าอนุญาต). |
-| [`section_title`](../scam-bot-backend/flex_cards.py#L118) | แปลงข้อความหัวข้อเป็นองค์ประกอบ Flex แบบตัวหนา โดยใช้สีและขนาดร่วมของการ์ด |
-| [`bullet`](../scam-bot-backend/flex_cards.py#L123) | จัดข้อความหนึ่งข้อเป็นแถว Flex พร้อมจุดนำหน้าและเปิดการตัดบรรทัด |
-| [`card_style`](../scam-bot-backend/flex_cards.py#L130) | เลือกแบบการ์ดจากสถานะ; ผลที่เตือน (is_scam=True เช่นกฎสำรองในกลุ่ม) ใช้แบบพบสัญญาณเสี่ยงเสมอ. |
-| [`build_result_card`](../scam-bot-backend/flex_cards.py#L138) | รับผลตรวจ คืน Flex Message หนึ่งข้อความ หรือ None ถ้าสถานะนี้ไม่ใช้การ์ด. |
+| [`reason_items`](../scam-bot-backend/flex_cards.py#L41) | แยกเหตุผลเป็นข้อ ๆ ตามขึ้นบรรทัดใหม่หรือ • ที่มากับผลตรวจ ไม่มีก็เป็นข้อเดียว. |
+| [`defang_links`](../scam-bot-backend/flex_cards.py#L60) | ทำลิงก์ให้อ่านออกแต่กดไม่ได้ (`https://a.com` → `hxxps://a[.]com`) เพราะ LINE ทำลิงก์ในข้อความธรรมดาให้กดได้ |
+| [`join_words`](../scam-bot-backend/flex_cards.py#L72) | ต่อคำตามตำแหน่งที่เลือก ใส่ … ตรงช่วงที่ข้ามไป |
+| [`important_text`](../scam-bot-backend/flex_cards.py#L86) | เลือกช่วงที่มีคำค้นใน LESSON_TOPICS มาแสดงเมื่อข้อความเกิน 150 ตัว ตัดตรงช่องว่างเท่านั้น; ใส่ไม่ได้คืน "" |
+| [`asset_url`](../scam-bot-backend/flex_cards.py#L125) | รูปอยู่ใน public/ ของเว็บ Mini App; LINE ดึงรูปได้เฉพาะ HTTPS. |
+| [`mascot_url`](../scam-bot-backend/flex_cards.py#L137) | คืน URL รูปมาสคอตตามชื่อท่าทาง หรือ None เมื่อยังไม่มีต้นทาง HTTPS ที่ใช้ได้ |
+| [`note_heading`](../scam-bot-backend/flex_cards.py#L142) | หัวกรอบคำเตือน/คำแนะนำ; มีไอคอนเมื่อโหลดรูปได้ ไม่งั้นเป็นตัวหนังสืออย่างเดียว. |
+| [`detail_action`](../scam-bot-backend/flex_cards.py#L154) | ปุ่มเปิด Mini App ถ้าตั้งค่าครบ; ไม่ครบใช้ postback บทเรียนในแชตแทน (ถ้าอนุญาต). |
+| [`section_title`](../scam-bot-backend/flex_cards.py#L168) | แปลงข้อความหัวข้อเป็นองค์ประกอบ Flex แบบตัวหนา โดยใช้สีและขนาดร่วมของการ์ด |
+| [`bullet`](../scam-bot-backend/flex_cards.py#L173) | จัดข้อความหนึ่งข้อเป็นแถว Flex พร้อมจุดนำหน้าและเปิดการตัดบรรทัด |
+| [`card_style`](../scam-bot-backend/flex_cards.py#L181) | เลือกแบบการ์ดจากสถานะ; ผลที่เตือน (is_scam=True เช่นกฎสำรองในกลุ่ม) ใช้แบบพบสัญญาณเสี่ยงเสมอ. |
+| [`build_result_card`](../scam-bot-backend/flex_cards.py#L225) | รับผลตรวจ คืน Flex Message หนึ่งข้อความ หรือ None ถ้าสถานะนี้ไม่ใช้การ์ด. |
 
 ### scam-bot-backend/learning.py
 
 | ฟังก์ชัน | หน้าที่ / ผลลัพธ์ / ข้อจำกัด |
 |---|---|
-| [`case_category`](../scam-bot-backend/learning.py#L14) | แยกประเภทเคสให้หน้า Mini App: มีลิงก์ = 'link', ไม่มี = 'message' (ไม่ได้ตัดสินความเสี่ยง). |
-| [`lesson_points`](../scam-bot-backend/learning.py#L21) | คำที่พบใช้เลือกคำแนะนำเท่านั้น ไม่ใช้ตัดสินความเสี่ยงซ้ำ. |
-| [`build_lesson`](../scam-bot-backend/learning.py#L49) | เลือกหัวข้อจากคำที่มีจริง ไม่ใช้คีย์เวิร์ดตัดสินว่าเป็นมิจฉาชีพ. |
-| [`build_case_detail`](../scam-bot-backend/learning.py#L87) | รับผลเดิม 3 สถานะ (เสี่ยง/ควรตรวจเพิ่ม/ยังไม่พบ) จัดข้อมูลสำหรับหน้าเว็บโดยไม่เรียก AI. |
+| [`case_category`](../scam-bot-backend/learning.py#L15) | แยกประเภทเคสให้หน้า Mini App: มีลิงก์ = 'link', ไม่มี = 'message' (ไม่ได้ตัดสินความเสี่ยง). |
+| [`lesson_points`](../scam-bot-backend/learning.py#L34) | คำที่พบใช้เลือกคำแนะนำเท่านั้น ไม่ใช้ตัดสินความเสี่ยงซ้ำ. |
+| [`build_lesson`](../scam-bot-backend/learning.py#L55) | เลือกหัวข้อจากคำที่มีจริง ไม่ใช้คีย์เวิร์ดตัดสินว่าเป็นมิจฉาชีพ. |
+| [`build_case_detail`](../scam-bot-backend/learning.py#L94) | รับผลเดิม 3 สถานะ (เสี่ยง/ควรตรวจเพิ่ม/ยังไม่พบ) จัดข้อมูลสำหรับหน้าเว็บโดยไม่เรียก AI. |
 | [`LessonStore.__init__`](../scam-bot-backend/learning.py#L108) | เตรียมที่เก็บบทเรียนใน RAM พร้อมอายุ ความจุ และ lock; ปฏิเสธค่าขีดจำกัดที่ไม่เป็นบวก |
 | [`LessonStore._expire`](../scam-bot-backend/learning.py#L116) | นำเคสที่หมดอายุด้านหน้าคิวออกจาก RAM ตามเวลาปัจจุบัน |
 | [`LessonStore.add`](../scam-bot-backend/learning.py#L121) | case_id: ใช้รหัสเดียวกับแถวใน detection_logs ถ้ามี (ไม่ส่ง = สุ่มใหม่). |

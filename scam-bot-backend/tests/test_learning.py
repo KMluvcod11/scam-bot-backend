@@ -151,8 +151,7 @@ class LearningTests(unittest.IsolatedAsyncioTestCase):
         self.module.analyze_message.return_value = {**result("risk_found"), "risk_level": "high"}
         await self.post_events([fixtures.text_event()])
         kwargs = self.module.reply_to_line.call_args.kwargs
-        self.assertEqual(set(kwargs), {"card", "continuation"})
-        self.assertEqual(kwargs["continuation"], "")
+        self.assertEqual(set(kwargs), {"card"})
         self.assertNotIn("footer", kwargs["card"]["contents"])
         self.assertNotIn("liff", str(kwargs["card"]))
         reply = self.module.reply_to_line.call_args.args[1]
@@ -209,8 +208,8 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
     asyncTearDown = fixtures.WebhookThreadpoolTests.asyncTearDown
     post_events = fixtures.WebhookThreadpoolTests.post_events
 
-    async def test_long_text_and_image_wire_continuation_for_private_and_group(self):
-        text = "ตรวจสอบข้อมูลก่อนส่ง OTP เบอร์ 081-234-5678 " * 30
+    async def test_long_text_and_image_send_one_card_for_private_and_group(self):
+        text = "ตรวจสอบข้อมูลก่อนส่ง เบอร์:081-234-5678 OTP " * 30
         number = 100
         for source in ("user", "group"):
             for image in (False, True):
@@ -225,10 +224,12 @@ class ResultCardWebhookTests(unittest.IsolatedAsyncioTestCase):
                     await self.post_events([event])
                     self.module.reply_to_line.assert_called_once()
                     kwargs = self.module.reply_to_line.call_args.kwargs
-                    self.assertIn("ฉบับเต็ม", kwargs["continuation"])
-                    self.assertIn("[ปกปิดเบอร์โทร]", kwargs["continuation"])
-                    self.assertNotIn("081-234-5678", kwargs["continuation"])
-                    self.assertIn("ผลตรวจข้อความจากรูปภาพ" if image else "ผลตรวจข้อความ", kwargs["continuation"])
+                    self.assertNotIn("continuation", kwargs)
+                    card = str(kwargs["card"])
+                    self.assertIn("ข้อความสำคัญ", card)
+                    self.assertIn("[ปกปิดเบอร์โทร]", card)
+                    self.assertNotIn("081-234-5678", card)
+                    self.assertIn("ผลตรวจข้อความจากรูปภาพ" if image else "ผลตรวจข้อความ", card)
                     if source == "group":
                         self.assertNotIn("learn_case_id", kwargs)
                         self.assertNotIn("footer", kwargs["card"]["contents"])

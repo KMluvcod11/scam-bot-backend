@@ -374,7 +374,7 @@ class WebhookGuardTests(unittest.IsolatedAsyncioTestCase):
             }
 
         # reply_image: จำลองส่งคำตอบรูปสำเร็จและจดลำดับการตอบโดยไม่เรียก LINE
-        def reply_image(token, message, card=None, continuation=""):
+        def reply_image(token, message, card=None):
             stages.append(("reply", threading.get_ident()))
             return True
 

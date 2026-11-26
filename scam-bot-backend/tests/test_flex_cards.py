@@ -124,25 +124,59 @@ class ResultCardTests(unittest.TestCase):
             self.assertIn(item, texts)
         self.assertEqual(texts.count("●"), 3)
 
-    # ไม่ตัดคำไทยใน preview; ส่งฉบับเต็มแทนเมื่อเนื้อหาเกินพื้นที่การ์ด
-    def test_long_thai_text_moves_to_continuation_and_warning_kept(self):
-        long_quote = "บัญชีของคุณจะถูกระงับ กรุณาส่งรหัส OTP ภายในห้านาทีเพื่อยืนยันตัวตน " * 10
-        long_reason = "แอบอ้างเป็นเจ้าหน้าที่ธนาคารและเร่งให้ผู้รับเปิดเผยข้อมูลสำคัญ" * 20
+    # ข้อความยาว: การ์ดแสดงเฉพาะช่วงสำคัญ ตัดตรงช่องว่างเท่านั้น และชี้ไป Mini App เมื่อมีปุ่ม
+    def test_long_text_shows_important_part_and_points_to_mini_app(self):
+        filler = "ข้อความทั่วไปของประกาศฉบับนี้ " * 10
+        long_quote = filler + "พร้อมกรอกรหัส OTP ที่ได้รับ " + filler
         with patch.dict(os.environ, LIVE_ENV):
-            for group in (False, True):
-                card = self.card(quote=long_quote, reason=long_reason, group=group)
-                texts = all_texts(card["contents"])
-                self.assertIn(flex_cards.LONG_QUOTE, texts)
-                self.assertIn(flex_cards.LONG_REASON, texts)
-                continuation = flex_cards.build_result_continuation(
-                    {"status": "risk_found", "reason": long_reason}, source="text", quote=long_quote)
-                self.assertIn(long_quote, continuation)
-                self.assertIn(long_reason, continuation)
-                self.assertIn(flex_cards.STATUS_STYLES["risk_found"]["advice"], texts)
-                self.assertIn(flex_cards.DISCLAIMER, texts)
-                self.assertFalse(any(node.get("maxLines") for node in walk(card)))
-                self.assertLessEqual(len(card["altText"]), 400)
-                self.assertLess(len(json.dumps(card).encode()), 30000)
+            card = self.card(quote=long_quote)
+        texts = all_texts(card["contents"])
+        excerpt = texts[texts.index("ข้อความสำคัญ") + 1]
+        self.assertIn("พร้อมกรอกรหัส OTP ที่ได้รับ", excerpt)
+        self.assertLessEqual(len(excerpt), flex_cards.QUOTE_LIMIT)
+        self.assertTrue(set(excerpt.split()) <= set(long_quote.split()) | {"…"})
+        self.assertIn(flex_cards.FULL_TEXT_HINT, texts)
+        self.assertIn(flex_cards.DISCLAIMER, texts)
+
+    # test_long_text_without_mini_app_button_does_not_mention_it: ไม่มีปุ่มเปิด Mini App ต้องไม่ชวนกดดูฉบับเต็ม
+    def test_long_text_without_mini_app_button_does_not_mention_it(self):
+        long_quote = "กรุณาส่งรหัส OTP ด่วน " * 30
+        with patch.dict(os.environ, LIVE_ENV):
+            group_texts = all_texts(self.card(quote=long_quote, group=True)["contents"])
+        with patch.dict(os.environ, {"MINI_LIFF_ID": "", "LINE_LOGIN_CHANNEL_ID": ""}):
+            postback_texts = all_texts(self.card(quote=long_quote, allow_postback=True)["contents"])
+        for texts in (group_texts, postback_texts):
+            self.assertIn("ข้อความสำคัญ", texts)
+            self.assertNotIn(flex_cards.FULL_TEXT_HINT, texts)
+
+    # test_important_text_without_keyword_uses_the_beginning: ไม่พบคำค้นใช้ช่วงต้นข้อความ
+    def test_important_text_without_keyword_uses_the_beginning(self):
+        excerpt = flex_cards.important_text("นัดประชุมทีมที่ห้องเดิม " * 30)
+        self.assertTrue(excerpt.startswith("นัดประชุมทีมที่ห้องเดิม"))
+        self.assertTrue(excerpt.endswith("…"))
+        self.assertLessEqual(len(excerpt), flex_cards.QUOTE_LIMIT)
+
+    # test_unbreakable_text_shows_label_instead_of_cutting_a_word: ไม่มีช่องว่างให้ตัด แสดงป้ายแทน
+    def test_unbreakable_text_shows_label_instead_of_cutting_a_word(self):
+        texts = all_texts(self.card(quote="ก" * 500)["contents"])
+        self.assertIn(flex_cards.LONG_QUOTE, texts)
+
+    # test_important_text_defangs_links: ลิงก์ในช่วงที่เลือกต้องกดไม่ได้
+    def test_important_text_defangs_links(self):
+        quote = "กดที่ https://phish.example.com/login ทันที " + "ข้อความทั่วไป " * 30
+        excerpt = flex_cards.important_text(quote)
+        self.assertIn("hxxps://phish[.]example[.]com/login", excerpt)
+        self.assertNotIn("https://", excerpt)
+
+    # test_long_reasons_keep_leading_items_and_say_there_is_more: เหตุผลเกินพื้นที่ยังแสดงข้อแรก ๆ
+    def test_long_reasons_keep_leading_items_and_say_there_is_more(self):
+        reason = "\n".join(f"เหตุผลข้อ {index}" for index in range(8))
+        with patch.dict(os.environ, LIVE_ENV):
+            texts = all_texts(self.card(reason=reason)["contents"])
+        self.assertIn("เหตุผลข้อ 0", texts)
+        self.assertNotIn("เหตุผลข้อ 7", texts)
+        self.assertIn(flex_cards.LONG_REASON, texts)
+        self.assertIn(flex_cards.FULL_TEXT_HINT, texts)
 
     # test_without_mini_settings_card_still_builds_without_image_or_uri: ทดสอบยังสร้างการ์ดได้เมื่อไม่ได้ตั้งค่า Mini App โดยไม่ใส่รูปหรือลิงก์ที่ใช้ไม่ได้
     def test_without_mini_settings_card_still_builds_without_image_or_uri(self):
@@ -165,37 +199,6 @@ class ResultCardTests(unittest.TestCase):
                 self.assertNotIn("081-234-5678", dumped)
                 self.assertNotIn("81 234 5678", dumped)
                 self.assertEqual(dumped.count("[ปกปิดเบอร์โทร]"), 2)  # ข้อความ + เหตุผล; altText มีเฉพาะสถานะ
-
-    # ฉบับเต็มเป็นข้อความธรรมดาที่ LINE ทำลิงก์ให้กดได้ บอตต้องไม่ส่งลิงก์มิจฉาชีพที่กดได้ซ้ำในนามตัวเอง
-    def test_continuation_defangs_links_so_line_cannot_make_them_clickable(self):
-        filler = "บัญชีของคุณจะถูกระงับ กรุณายืนยันตัวตนทันที " * 5
-        quote = (filler + "กดที่ https://phish.example.com/login หรือ HTTP://Bad.Example.org "
-                 "หรือ www.fake-bank.co.th และ bit.ly/abc123 ค่าธรรมเนียม 1.5 บาท")
-        reason = "ข้อความให้กดลิงก์ https://phish.example.com/login เพื่อยืนยันตัวตน"
-        continuation = flex_cards.build_result_continuation(
-            {"status": "risk_found", "is_scam": True, "reason": reason}, source="text", quote=quote)
-        lowered = continuation.lower()
-        for clickable in ("http://", "https://", "www.", "example.com", "example.org", "co.th", "bit.ly"):
-            self.assertNotIn(clickable, lowered)
-        self.assertIn("hxxps://phish[.]example[.]com/login", continuation)
-        self.assertIn("www[.]fake-bank[.]co[.]th", continuation)
-        self.assertIn("bit[.]ly/abc123", continuation)
-        self.assertIn("1.5 บาท", continuation)  # ตัวเลขทศนิยมไม่ใช่ลิงก์ ไม่ต้องแก้
-
-    def test_short_content_needs_no_continuation(self):
-        self.assertEqual(flex_cards.build_result_continuation(
-            {"status": "no_risk_found", "reason": "เป็นการนัดหมาย"}, source="text", quote="นัดพรุ่งนี้"), "")
-
-    def test_all_reason_items_are_preserved_and_result_not_mutated(self):
-        result = {"status": "uncertain", "risk_level": "medium", "reason": "\n".join(
-            f"เหตุผลข้อ {index}" for index in range(8))}
-        before = dict(result)
-        text = flex_cards.build_result_continuation(result, source="image", quote="ข้อความ")
-        self.assertIn("ผลตรวจข้อความจากรูปภาพ", text)
-        for index in range(8):
-            self.assertIn(f"เหตุผลข้อ {index}", text)
-        self.assertEqual(result, before)
-        self.assertNotIn("medium", text)
 
     # test_unknown_status_returns_none: ทดสอบสถานะที่ไม่รองรับคืน None แทนการสร้างการ์ดผิดชนิด
     def test_unknown_status_returns_none(self):
@@ -254,7 +257,7 @@ class CardReplyTests(unittest.TestCase):
             self.assertFalse(self.module.reply_to_line("token", "ผลตรวจ", card=self.card))
         self.assertEqual(post.call_count, 1)
 
-    def test_long_payload_matrix_keeps_content_and_privacy(self):
+    def test_long_content_sends_only_the_card(self):
         quote = "ข้อความที่พบ กรุณาตรวจสอบก่อนทำตาม เบอร์ 081-234-5678\n" * 160
         reason = "ตรวจบริบทและผู้ส่งเพิ่มเติม\n" * 22
         with patch.dict(os.environ, LIVE_ENV):
@@ -265,17 +268,10 @@ class CardReplyTests(unittest.TestCase):
                             result = {"status": status, "reason": reason, "risk_level": "high"}
                             card = flex_cards.build_result_card(result, source=source, quote=quote,
                                 case_id=None if group else CASE_ID, group=group)
-                            continuation = flex_cards.build_result_continuation(result, source=source, quote=quote)
                             with patch.object(self.module.requests, "post", return_value=Mock()) as post:
-                                self.assertTrue(self.module.reply_to_line("token", "fallback", card=card,
-                                    continuation=continuation))
+                                self.assertTrue(self.module.reply_to_line("token", "fallback", card=card))
                             messages = post.call_args.kwargs["json"]["messages"]
-                            self.assertEqual(messages[0], card)
-                            self.assertGreater(len(messages), 1)
-                            self.assertLessEqual(len(messages), 5)
-                            self.assertEqual("".join(m["text"] for m in messages[1:]), continuation)
-                            for message in messages[1:]:
-                                self.assertLessEqual(len(message["text"].encode("utf-16-le")) // 2, 5000)
+                            self.assertEqual(messages, [card])
                             dumped = json.dumps(messages, ensure_ascii=False)
                             self.assertNotIn("081-234-5678", dumped)
                             self.assertNotIn("high", dumped)
@@ -288,7 +284,7 @@ class CardReplyTests(unittest.TestCase):
         rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
         text = "ตรวจสอบ 081-234-5678 ก่อนทำตาม\n" * 250
         with patch.object(self.module.requests, "post", side_effect=[rejected, Mock()]) as post:
-            self.assertTrue(self.module.reply_to_line("token", "ผลตรวจ", card=self.card, continuation=text))
+            self.assertTrue(self.module.reply_to_line("token", text, card=self.card))
         messages = post.call_args.kwargs["json"]["messages"]
         self.assertEqual("".join(m["text"] for m in messages), self.module.redact_phone(text))
         self.assertEqual(post.call_count, 2)
@@ -307,9 +303,9 @@ class CardReplyTests(unittest.TestCase):
     def test_impossible_payload_is_explicit_not_silently_truncated(self):
         for text in ("ก" * 5001, "คำเตือน " * 4000):
             with self.subTest(length=len(text)), patch.object(self.module.requests, "post", return_value=Mock()) as post:
-                self.module.reply_to_line("token", text, card=self.card, continuation=text)
+                self.module.reply_to_line("token", text)
                 self.assertEqual(post.call_args.kwargs["json"]["messages"],
-                                 [self.card, {"type": "text", "text": self.module.TOO_LONG_NOTICE}])
+                                 [{"type": "text", "text": self.module.TOO_LONG_NOTICE}])
 
     def test_plain_fallback_redacts_phone(self):
         with patch.object(self.module.requests, "post", return_value=Mock()) as post:
@@ -345,22 +341,12 @@ class CardReplyTests(unittest.TestCase):
         button = post.call_args.kwargs["json"]["messages"][-1]["template"]["actions"][0]
         self.assertEqual(button["uri"], f"https://liff.line.me/1234567890-TestApp?case={CASE_ID}")
 
-    def test_five_text_chunks_replace_card_without_losing_content(self):
-        text = "ข้อความครบ " * 2100
-        with patch.object(self.module.requests, "post", return_value=Mock()) as post:
-            self.assertTrue(self.module.reply_to_line("token", "ผลตรวจ", card=self.card, continuation=text))
-        messages = post.call_args.kwargs["json"]["messages"]
-        self.assertEqual(len(messages), 5)
-        self.assertTrue(all(m["type"] == "text" for m in messages))
-        self.assertEqual("".join(m["text"] for m in messages), text)
-
     def test_non_400_errors_do_not_resend(self):
         for status in (401, 429, 500):
             rejected = Mock(status_code=status)
             rejected.raise_for_status.side_effect = requests.HTTPError(response=rejected)
             with self.subTest(status=status), patch.object(self.module.requests, "post", return_value=rejected) as post:
-                self.assertFalse(self.module.reply_to_line("token", "ผลตรวจ", card=self.card,
-                    continuation="เหตุผลฉบับเต็ม " * 500))
+                self.assertFalse(self.module.reply_to_line("token", "ผลตรวจ", card=self.card))
             self.assertEqual(post.call_count, 1)
 
 

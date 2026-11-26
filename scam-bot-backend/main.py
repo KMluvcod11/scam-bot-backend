@@ -31,7 +31,7 @@ from detector import analyze_message, extract_text_from_image
 from messaging import reply_to_line, get_image_content
 from event_guard import EventGuard
 from learning import LessonStore, build_lesson
-from flex_cards import build_help_card, build_result_card, build_result_continuation
+from flex_cards import build_help_card, build_result_card
 import mini_history
 from mini_api import create_mini_router, mini_web_origins
 from detection_history import save_detection, save_group_join, save_group_leave, save_group_members
@@ -364,8 +364,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
                     reply_to_line,
                     event.reply_token,
                     reply_msg,
-                    **({"card": card, "continuation": build_result_continuation(
-                        image_result, source="image", quote=ocr_text)} if card else {}),
+                    **({"card": card} if card else {}),
                 )
                 print(f"[IMAGE REPLY] sent={sent}")
             except Exception as error:
@@ -435,8 +434,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
         # การส่ง LINE ก็รอเครือข่าย จึงให้ thread pool ทำงานส่วนนี้ด้วย
         try:
             sent = await run_in_threadpool(reply_to_line, reply_token, reply_msg,
-                                           **({"card": card, "continuation": build_result_continuation(
-                                               result, source="text", quote=user_text)} if card else {}))
+                                           **({"card": card} if card else {}))
         except Exception as error:
             print(f"[SEND ERROR] stage=line_reply type={type(error).__name__}")
             await run_in_threadpool(timed_call, "history", save_detection, event, result,
@@ -606,8 +604,6 @@ async def process_private_event(event: MessageEvent):
             options["learn_case_id"] = case_id
         if card:
             options["card"] = card
-            options["continuation"] = build_result_continuation(
-                result, source="text", quote=event.message.text)
         elif reply_msg == PRIVATE_HELP:
             options["card"] = build_help_card()
         sent = await run_in_threadpool(reply_to_line, event.reply_token, reply_msg, **options)

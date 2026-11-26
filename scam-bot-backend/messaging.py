@@ -157,10 +157,10 @@ def get_sender_display_name(kind: str, source_id: str, user_id: str) -> str | No
 
 # 2. รับค่า: reply_token ของ event และ message_text ที่ต้องการตอบ
 # คืนค่า bool: True = LINE API ยอมรับ; False = HTTP/เครือข่ายผิดพลาด
-# card: Flex Message เดิม; continuation เป็นฉบับเต็มเมื่อเนื้อหายาว ไม่เพิ่มปุ่มส่วนตัวในข้อความต่อท้าย
+# card: Flex Message ผลตรวจ ส่งใบเดียว; message_text เป็นข้อความสำรองเมื่อไม่มีการ์ดหรือ LINE ไม่รับการ์ด
 # reply_to_line: ส่งการ์ดหรือข้อความด้วย reply token; การ์ดถูกปฏิเสธ 400 จึงลองข้อความแทน คืน bool ว่า LINE ยอมรับหรือไม่
 def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | None = None,
-                  card: dict | None = None, continuation: str = "") -> bool:
+                  card: dict | None = None) -> bool:
     # 2.1 ประกาศปลายทาง header ยืนยันตัวตน และ JSON payload
     url = "https://api.line.me/v2/bot/message/reply"
     headers = {
@@ -170,20 +170,10 @@ def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | N
     # ข้อความธรรมดาทุกชิ้นผ่านจุดนี้: ปกปิดเบอร์ และทำลิงก์ให้กดไม่ได้ (LINE ทำลิงก์ในข้อความธรรมดาให้กดได้)
     # ใช้กับเหตุผลจาก AI ที่อาจยกลิงก์มิจฉาชีพมา; ลิงก์ปุ่ม Mini App เป็น action จึงไม่ถูกแก้
     message_text = defang_links(redact_phone(message_text) or "")
-    continuation = defang_links(redact_phone(continuation) or "")
-    fallback_text = continuation or message_text
     if card:
-        messages = [card]
-        if continuation:
-            extra = text_messages(continuation, limit=REPLY_MESSAGE_LIMIT - 1)
-            if extra is not None:
-                messages.extend(extra)
-            else:
-                # ถ้าฉบับเต็มใช้ครบ 5 ข้อความ ให้ส่งข้อความแทนการ์ดโดยไม่ทิ้งเนื้อหา
-                messages = text_messages(continuation) or [card, {"type": "text", "text": TOO_LONG_NOTICE}]
         try:
             res = timed_call("line_reply", requests.post, url, headers=headers,
-                             json={"replyToken": reply_token, "messages": messages}, timeout=10)
+                             json={"replyToken": reply_token, "messages": [card]}, timeout=10)
             res.raise_for_status()
             return True
         except requests.HTTPError as e:
@@ -198,7 +188,7 @@ def reply_to_line(reply_token: str, message_text: str, *, learn_case_id: str | N
             return False
     payload = {
         "replyToken": reply_token,
-        "messages": text_messages(fallback_text) or [{"type": "text", "text": TOO_LONG_NOTICE}]
+        "messages": text_messages(message_text) or [{"type": "text", "text": TOO_LONG_NOTICE}]
     }
     if learn_case_id and len(payload["messages"]) < REPLY_MESSAGE_LIMIT:
         mini_url = get_mini_case_url(learn_case_id)
