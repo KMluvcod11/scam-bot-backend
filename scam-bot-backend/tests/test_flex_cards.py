@@ -81,7 +81,13 @@ class ResultCardTests(unittest.TestCase):
                             self.assertEqual(card["contents"]["header"]["backgroundColor"],
                                              flex_cards.STATUS_STYLES[status]["header"])
                             self.assertIn(f"https://mini.example/mascot/{pose}.png", dumped)
-                            for word in FORBIDDEN:
+                            # การ์ดเสี่ยงแสดงระดับ ("high" → สูง); สถานะอื่นห้ามมีคำระดับ
+                            if status == "risk_found":
+                                self.assertIn("ระดับความเสี่ยง: สูง", texts)
+                            else:
+                                for word in FORBIDDEN:
+                                    self.assertNotIn(word, dumped)
+                            for word in ("HIGH", "MEDIUM", "LOW", "100%"):
                                 self.assertNotIn(word, dumped)
                             if group:
                                 self.assertNotIn("footer", card["contents"])
@@ -119,9 +125,21 @@ class ResultCardTests(unittest.TestCase):
                                              "reason": "ใกล้เคียง 85% (ระบบสำรอง)"},
                                             source="text", quote="x", case_id=None, group=True)
         self.assertIn("พบสัญญาณเสี่ยง", all_texts(card["contents"]))
+        self.assertIn("ระดับความเสี่ยง: กลาง", all_texts(card["contents"]))
+        self.assertIn("(ระดับกลาง)", card["altText"])
         self.assertNotIn("medium", json.dumps(card).lower())
         self.assertIsNone(flex_cards.build_result_card({"status": "fallback", "is_scam": False},
                                                        source="text", quote="x", case_id=None))
+
+    # test_risk_card_without_known_level_has_no_badge: ไม่มี risk_level หรือเป็น low ต้องไม่แสดงป้าย
+    def test_risk_card_without_known_level_has_no_badge(self):
+        for level in (None, "low", "critical"):
+            with self.subTest(level=level):
+                card = flex_cards.build_result_card(
+                    {"status": "risk_found", "is_scam": True, "risk_level": level, "reason": "x"},
+                    source="text", quote="x", case_id=None)
+                self.assertNotIn("ระดับความเสี่ยง", json.dumps(card, ensure_ascii=False))
+                FlexMessage.from_dict(card)
 
     # test_reason_lines_become_bullets: ทดสอบเหตุผลหลายบรรทัดถูกแสดงเป็นรายการแต่ละข้อ
     def test_reason_lines_become_bullets(self):

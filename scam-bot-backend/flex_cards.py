@@ -1,6 +1,7 @@
 """สร้างการ์ดผลตรวจ (LINE Flex Message) จากผลเดิม ไม่เรียก AI และไม่ส่ง LINE เอง.
 
-การ์ดไม่แสดงระดับความเสี่ยง (risk_level) ค่านั้นยังอยู่ในผลตรวจและประวัติให้ Dashboard ใช้ตามเดิม
+ระดับความเสี่ยง (risk_level) แสดงเฉพาะการ์ดพบสัญญาณเสี่ยง (สูง/กลาง);
+การ์ดยังประเมินไม่ได้และยังไม่พบสัญญาณเสี่ยงไม่แสดง เพราะสถานะบอกอยู่แล้ว และ "ต่ำ" อาจถูกอ่านว่าปลอดภัย
 """
 import re
 
@@ -21,6 +22,11 @@ STATUS_STYLES = {
     "no_risk_found": {"title": "ยังไม่พบสัญญาณเสี่ยง", "pose": "calm", "header": "#BDF3D8",
                       "note_title": "คำแนะนำ", "note_color": "#0F6E56", "note_background": "#DCFFF0",
                       "advice": "ผลนี้ไม่รับรองว่าปลอดภัย และไม่ได้ตรวจเว็บไซต์ปลายทาง"},
+}
+# ป้ายระดับบนการ์ดพบสัญญาณเสี่ยง: (คำที่แสดง, สี, ความหมายของระดับ) เกณฑ์ตรงกับ prompt ใน detector.py
+RISK_LEVELS = {
+    "high": ("สูง", "#B42336", "พบสัญญาณที่อาจทำให้เสียเงินหรือเสียบัญชีได้ทันที"),
+    "medium": ("กลาง", "#9A5B00", "พบสัญญาณเสี่ยงบางอย่าง ควรตรวจสอบก่อนทำตาม"),
 }
 TEXT_STRONG = "#241A24"
 TEXT_BODY = "#352B35"
@@ -247,9 +253,20 @@ def build_result_card(result: dict, *, source: str, quote: str, case_id: str | N
     if image:
         status_contents.append({"type": "image", "url": image, "size": "72px",
                                 "aspectRatio": "1:1", "aspectMode": "fit", "flex": 0})
-    status_contents.append({"type": "text", "text": style["title"], "weight": "bold",
-                            "size": "lg", "color": style["note_color"], "wrap": True,
-                            "flex": 1, "gravity": "center"})
+    title = {"type": "text", "text": style["title"], "weight": "bold",
+             "size": "lg", "color": style["note_color"], "wrap": True,
+             "flex": 1, "gravity": "center"}
+    # ระดับแสดงเฉพาะการ์ดเสี่ยง; ค่าอื่นหรือไม่มีค่า (เช่น low) ไม่แสดงป้าย
+    level = RISK_LEVELS.get(result.get("risk_level")) if style is STATUS_STYLES["risk_found"] else None
+    if level:
+        level_word, level_color, level_meaning = level
+        title = {"type": "box", "layout": "vertical", "spacing": "xs", "flex": 1,
+                 "justifyContent": "center", "contents": [
+            {key: value for key, value in title.items() if key not in ("flex", "gravity")},
+            {"type": "text", "text": f"ระดับความเสี่ยง: {level_word}", "weight": "bold",
+             "size": "sm", "color": level_color},
+            {"type": "text", "text": level_meaning, "size": "xs", "color": TEXT_MUTED, "wrap": True}]}
+    status_contents.append(title)
 
     quote_is_long = len(quote) > QUOTE_LIMIT
     if quote_is_long:
@@ -300,4 +317,6 @@ def build_result_card(result: dict, *, source: str, quote: str, case_id: str | N
 
     # altText แสดงในรายการแชต/แจ้งเตือน LINE จำกัด 400 ตัวอักษร
     alt_text = f"{kicker}: {style['title']}"
+    if level:
+        alt_text += f" (ระดับ{level_word})"
     return {"type": "flex", "altText": alt_text, "contents": bubble}

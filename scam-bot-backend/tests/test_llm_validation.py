@@ -61,9 +61,16 @@ class LLMValidationTests(unittest.TestCase):
     def test_valid_boolean_and_all_risk_levels(self):
         for flag in (True, False):
             for level in ("low", "medium", "high"):
+                if flag and level == "low":
+                    continue
                 with self.subTest(flag=flag, level=level):
                     value = {**self.valid, "is_scam": flag, "risk_level": level}
                     self.assertEqual(self.detector.validate_llm_result(value), value)
+
+    # test_reject_scam_with_low_risk: ผลเตือนแต่ระดับต่ำขัดกันบนการ์ด จึงต้องถูกปฏิเสธ
+    def test_reject_scam_with_low_risk(self):
+        with self.assertRaises(ValueError):
+            self.detector.validate_llm_result({**self.valid, "is_scam": True, "risk_level": "low"})
 
     # test_reject_non_objects: ทดสอบปฏิเสธผล LLM ที่ไม่ใช่ JSON object
     def test_reject_non_objects(self):

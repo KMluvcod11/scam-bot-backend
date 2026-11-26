@@ -423,7 +423,7 @@ async def _process_text_event(event: MessageEvent | PostbackEvent):
     if result.get("is_scam"):
         reason_text = result.get('reason', 'ตรวจพบพฤติกรรมหลอกลวง')
 
-        # ไม่แสดง risk_level ในแชต ค่ายังอยู่ใน result และประวัติให้ Dashboard ใช้
+        # ข้อความสำรองนี้ไม่แสดง risk_level; ระดับแสดงบนการ์ด Flex (flex_cards.py)
         reply_msg = (
             f"⚠️ พบสัญญาณเสี่ยงต่อการหลอกลวง\n"
             f"• เหตุผล: {reason_text}\n\n"
